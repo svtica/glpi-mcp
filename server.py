@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import json
 import logging
 import os
@@ -25,7 +25,10 @@ def _load_config() -> Dict[str, str]:
         for key in ("GLPI_URL", "GLPI_APP_TOKEN", "GLPI_USER_TOKEN"):
             if key in raw:
                 decoded[key] = base64.b64decode(raw[key]).decode("utf-8")
-        logger.info("Configuration chargÃ©e depuis config.json")
+        # LANG n'est pas encodé en base64
+        if "LANG" in raw:
+            decoded["LANG"] = raw["LANG"]
+        logger.info("Configuration chargée depuis config.json")
         return decoded
     logger.info("config.json absent, utilisation des variables d'environnement")
     return {}
@@ -34,43 +37,103 @@ _config = _load_config()
 GLPI_URL        = _config.get("GLPI_URL",        os.environ.get("GLPI_URL", "")).rstrip("/")
 GLPI_APP_TOKEN  = _config.get("GLPI_APP_TOKEN",  os.environ.get("GLPI_APP_TOKEN", ""))
 GLPI_USER_TOKEN = _config.get("GLPI_USER_TOKEN", os.environ.get("GLPI_USER_TOKEN", ""))
+LANG            = _config.get("LANG",            os.environ.get("GLPI_LANG", "fr")).lower()
 
 # ---------------------------------------------------------------------------
-# Mappings GLPI â†’ libellÃ©s lisibles
+# Mappings GLPI — libellés lisibles (fr / en)
 # ---------------------------------------------------------------------------
-TICKET_STATUS = {
-    1: "Nouveau",
-    2: "En cours (attribuÃ©)",
-    3: "En cours (planifiÃ©)",
-    4: "En attente",
-    5: "RÃ©solu",
-    6: "Clos",
+_MAPPINGS = {
+    "fr": {
+        "TICKET_STATUS": {
+            1: "Nouveau",
+            2: "En cours (attribué)",
+            3: "En cours (planifié)",
+            4: "En attente",
+            5: "Résolu",
+            6: "Clos",
+        },
+        "TICKET_TYPE": {
+            1: "Incident",
+            2: "Demande de service",
+        },
+        "TICKET_PRIORITY": {
+            1: "Très basse",
+            2: "Basse",
+            3: "Moyenne",
+            4: "Haute",
+            5: "Très haute",
+            6: "Majeure",
+        },
+        "TASK_STATUS": {
+            1: "À faire",
+            2: "Terminée",
+        },
+        "TICKET_LINK_TYPE": {
+            1: "Lié à",
+            2: "Duplique",
+            3: "Enfant de",
+            4: "Parent de",
+        },
+        "UNKNOWN":          "Inconnu",
+        "UNKNOWN_F":        "Inconnue",
+        "UNASSIGNED":       "Non assigné",
+        "UNCATEGORIZED":    "Sans catégorie",
+    },
+    "en": {
+        "TICKET_STATUS": {
+            1: "New",
+            2: "In progress (assigned)",
+            3: "In progress (planned)",
+            4: "Pending",
+            5: "Solved",
+            6: "Closed",
+        },
+        "TICKET_TYPE": {
+            1: "Incident",
+            2: "Service request",
+        },
+        "TICKET_PRIORITY": {
+            1: "Very low",
+            2: "Low",
+            3: "Medium",
+            4: "High",
+            5: "Very high",
+            6: "Major",
+        },
+        "TASK_STATUS": {
+            1: "To do",
+            2: "Done",
+        },
+        "TICKET_LINK_TYPE": {
+            1: "Linked to",
+            2: "Duplicates",
+            3: "Child of",
+            4: "Parent of",
+        },
+        "UNKNOWN":          "Unknown",
+        "UNKNOWN_F":        "Unknown",
+        "UNASSIGNED":       "Unassigned",
+        "UNCATEGORIZED":    "Uncategorized",
+    },
 }
 
-TICKET_TYPE = {
-    1: "Incident",
-    2: "Demande de service",
-}
+_lang_data      = _MAPPINGS.get(LANG, _MAPPINGS["fr"])
+TICKET_STATUS   = _lang_data["TICKET_STATUS"]
+TICKET_TYPE     = _lang_data["TICKET_TYPE"]
+TICKET_PRIORITY = _lang_data["TICKET_PRIORITY"]
+TICKET_URGENCY  = TICKET_PRIORITY  # même échelle
+TICKET_IMPACT   = TICKET_PRIORITY  # même échelle
+TASK_STATUS     = _lang_data["TASK_STATUS"]
+TICKET_LINK_TYPE = _lang_data["TICKET_LINK_TYPE"]
+LABEL_UNKNOWN   = _lang_data["UNKNOWN"]
+LABEL_UNKNOWN_F = _lang_data["UNKNOWN_F"]
+LABEL_UNASSIGNED = _lang_data["UNASSIGNED"]
+LABEL_UNCATEGORIZED = _lang_data["UNCATEGORIZED"]
 
-TICKET_PRIORITY = {
-    1: "TrÃ¨s basse",
-    2: "Basse",
-    3: "Moyenne",
-    4: "Haute",
-    5: "TrÃ¨s haute",
-    6: "Majeure",
-}
-
-TICKET_URGENCY = TICKET_PRIORITY  # mÃªme Ã©chelle
-TICKET_IMPACT  = TICKET_PRIORITY  # mÃªme Ã©chelle
-
-TASK_STATUS = {
-    1: "Ã€ faire",
-    2: "TerminÃ©e",
-}
+logger.info("Langue des libellés : %s", LANG)
 
 # ---------------------------------------------------------------------------
-# Session GLPI (initialisÃ©e une fois au dÃ©marrage)
+# Session GLPI (initialisée une fois au démarrage)
 # ---------------------------------------------------------------------------
 _session_token: Optional[str] = None
 
@@ -88,12 +151,12 @@ async def _init_session() -> str:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         _session_token = resp.json()["session_token"]
-        logger.info("Session GLPI initialisÃ©e.")
+        logger.info("Session GLPI initialisée.")
         return _session_token
 
 
 async def _get_session() -> str:
-    """Retourne le session_token existant ou en crÃ©e un nouveau."""
+    """Retourne le session_token existant ou en crée un nouveau."""
     if not _session_token:
         return await _init_session()
     return _session_token
@@ -116,16 +179,49 @@ class GLPIClient:
         }
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """ExÃ©cute une requÃªte HTTP avec renouvellement automatique de session sur 401."""
+        """Exécute une requête HTTP avec renouvellement automatique de session sur 401."""
         url = f"{GLPI_URL}{path}"
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.request(method, url, headers=await self._headers(), **kwargs)
             if resp.status_code == 401:
-                logger.warning("Session expirÃ©e, renouvellement automatique...")
+                logger.warning("Session expirée, renouvellement automatique...")
                 await _init_session()
                 resp = await client.request(method, url, headers=await self._headers(), **kwargs)
-            resp.raise_for_status()
-            return resp.json()
+
+            # --- Gestion d'erreurs structurée ---
+            try:
+                body = resp.json()
+            except Exception:
+                if resp.is_success:
+                    return {"message": "Opération réussie (réponse vide)."}
+                return {
+                    "error": f"Erreur HTTP {resp.status_code}",
+                    "detail": resp.text[:500] if resp.text else "Réponse vide",
+                }
+
+            # GLPI retourne parfois des erreurs sous forme ["ERROR_*", "message"]
+            if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
+                error_code, error_msg = body[0], body[1]
+                if error_code in ("ERROR_SESSION_TOKEN_INVALID", "ERROR_SESSION_TOKEN_MISSING"):
+                    logger.warning("Token de session invalide (%s), renouvellement...", error_code)
+                    await _init_session()
+                    resp = await client.request(method, url, headers=await self._headers(), **kwargs)
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        if resp.is_success:
+                            return {"message": "Opération réussie (réponse vide)."}
+                        return {"error": f"Erreur HTTP {resp.status_code}", "detail": resp.text[:500]}
+                    if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
+                        return {"error": body[0], "message": body[1]}
+                else:
+                    return {"error": error_code, "message": error_msg}
+
+            # Erreurs HTTP classiques (4xx/5xx) avec body JSON
+            if not resp.is_success:
+                return {"error": f"Erreur HTTP {resp.status_code}", "detail": body}
+
+            return body
 
     async def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         return await self._request("GET", path, params=params)
@@ -141,12 +237,12 @@ class GLPIClient:
 
 
 def _enrich_ticket(ticket: Dict[str, Any]) -> Dict[str, Any]:
-    """Ajoute des libellÃ©s lisibles aux champs numÃ©riques d'un ticket."""
-    ticket["_status_label"]   = TICKET_STATUS.get(ticket.get("status"), "Inconnu")
-    ticket["_type_label"]     = TICKET_TYPE.get(ticket.get("type"), "Inconnu")
-    ticket["_priority_label"] = TICKET_PRIORITY.get(ticket.get("priority"), "Inconnue")
-    ticket["_urgency_label"]  = TICKET_URGENCY.get(ticket.get("urgency"), "Inconnue")
-    ticket["_impact_label"]   = TICKET_IMPACT.get(ticket.get("impact"), "Inconnu")
+    """Ajoute des libellés lisibles aux champs numériques d'un ticket."""
+    ticket["_status_label"]   = TICKET_STATUS.get(ticket.get("status"), LABEL_UNKNOWN)
+    ticket["_type_label"]     = TICKET_TYPE.get(ticket.get("type"), LABEL_UNKNOWN)
+    ticket["_priority_label"] = TICKET_PRIORITY.get(ticket.get("priority"), LABEL_UNKNOWN_F)
+    ticket["_urgency_label"]  = TICKET_URGENCY.get(ticket.get("urgency"), LABEL_UNKNOWN_F)
+    ticket["_impact_label"]   = TICKET_IMPACT.get(ticket.get("impact"), LABEL_UNKNOWN)
     return ticket
 
 
@@ -157,7 +253,7 @@ mcp = FastMCP("GLPI MCP")
 glpi = GLPIClient()
 
 
-# â”€â”€ Session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Session ────────────────────────────────────────────────────────────────
 
 @mcp.tool()
 async def kill_session() -> Dict[str, str]:
@@ -167,10 +263,10 @@ async def kill_session() -> Dict[str, str]:
         return {"message": "Aucune session active."}
     await glpi.get("/apirest.php/killSession")
     _session_token = None
-    return {"message": "Session fermÃ©e."}
+    return {"message": "Session fermée."}
 
 
-# â”€â”€ Tickets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Tickets ────────────────────────────────────────────────────────────────
 
 @mcp.tool()
 async def list_tickets(
@@ -181,7 +277,7 @@ async def list_tickets(
 ) -> List[Dict[str, Any]]:
     """
     Liste les tickets avec pagination optionnelle.
-    - status : 1=Nouveau 2=En cours(attribuÃ©) 3=En cours(planifiÃ©) 4=En attente 5=RÃ©solu 6=Clos
+    - status : 1=Nouveau 2=En cours(attribué) 3=En cours(planifié) 4=En attente 5=Résolu 6=Clos
     - ticket_type : 1=Incident 2=Demande de service
     - range_start / range_limit : pagination
     """
@@ -201,7 +297,7 @@ async def list_tickets(
 
 @mcp.tool()
 async def get_ticket(ticket_id: int) -> Dict[str, Any]:
-    """Retourne le dÃ©tail complet d'un ticket, avec libellÃ©s lisibles."""
+    """Retourne le détail complet d'un ticket, avec libellés lisibles."""
     ticket = await glpi.get(f"/apirest.php/Ticket/{ticket_id}")
     return _enrich_ticket(ticket)
 
@@ -217,8 +313,8 @@ async def search_tickets(
     range_limit: int = 50,
 ) -> Any:
     """
-    Recherche avancÃ©e de tickets via l'API GLPI /search/Ticket.
-    Tous les paramÃ¨tres sont optionnels et combinables.
+    Recherche avancée de tickets via l'API GLPI /search/Ticket.
+    Tous les paramètres sont optionnels et combinables.
     """
     criteria = []
     idx = 0
@@ -284,9 +380,9 @@ async def create_ticket(
     assigned_group_id: Optional[int] = None,
 ) -> Any:
     """
-    CrÃ©e un nouveau ticket.
+    Crée un nouveau ticket.
     - ticket_type : 1=Incident 2=Demande de service
-    - priority : 1 (trÃ¨s basse) â†’ 6 (majeure)
+    - priority : 1 (très basse) → 6 (majeure)
     """
     input_data: Dict[str, Any] = {
         "name": name,
@@ -307,7 +403,7 @@ async def create_ticket(
 @mcp.tool()
 async def update_ticket(ticket_id: int, update_fields: Dict[str, Any]) -> Any:
     """
-    Met Ã  jour un ticket. Passer uniquement les champs Ã  modifier.
+    Met à jour un ticket. Passer uniquement les champs à modifier.
     Exemples de champs : status, priority, name, content, itilcategories_id
     """
     return await glpi.put(f"/apirest.php/Ticket/{ticket_id}", {"input": update_fields})
@@ -319,15 +415,120 @@ async def delete_ticket(ticket_id: int) -> Any:
     return await glpi.delete(f"/apirest.php/Ticket/{ticket_id}")
 
 
-# â”€â”€ CatÃ©gories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Liaison de tickets ─────────────────────────────────────────────────────
+
+@mcp.tool()
+async def link_tickets(
+    ticket_id_1: int,
+    ticket_id_2: int,
+    link_type: int = 1,
+) -> Any:
+    """
+    Crée un lien entre deux tickets.
+    - link_type : 1=Lié à, 2=Duplique, 3=Enfant de, 4=Parent de
+    """
+    return await glpi.post("/apirest.php/Ticket_Ticket", {"input": {
+        "tickets_id_1": ticket_id_1,
+        "tickets_id_2": ticket_id_2,
+        "link": link_type,
+    }})
+
+
+@mcp.tool()
+async def list_ticket_links(ticket_id: int) -> Any:
+    """Liste tous les liens d'un ticket avec d'autres tickets."""
+    result = await glpi.get(f"/apirest.php/Ticket/{ticket_id}/Ticket_Ticket")
+    if isinstance(result, list):
+        for link in result:
+            link["_link_label"] = TICKET_LINK_TYPE.get(link.get("link"), LABEL_UNKNOWN)
+    return result
+
+
+@mcp.tool()
+async def merge_tickets(
+    target_ticket_id: int,
+    source_ticket_ids: List[int],
+    add_followups: bool = True,
+    close_source: bool = True,
+) -> Dict[str, Any]:
+    """
+    Fusionne un ou plusieurs tickets source vers un ticket cible.
+    - Lie chaque ticket source au ticket cible comme doublon (link_type=2)
+    - Copie les suivis des tickets source vers le ticket cible (si add_followups=True)
+    - Ferme les tickets source avec un suivi explicatif (si close_source=True)
+
+    Paramètres :
+    - target_ticket_id : ID du ticket cible (celui qui reste ouvert)
+    - source_ticket_ids : liste des IDs de tickets à fusionner dans le cible
+    - add_followups : copier les suivis des tickets source vers le cible
+    - close_source : fermer les tickets source après la fusion
+    """
+    results: Dict[str, Any] = {
+        "target_ticket_id": target_ticket_id,
+        "merged": [],
+        "errors": [],
+    }
+
+    for src_id in source_ticket_ids:
+        merge_result: Dict[str, Any] = {"source_ticket_id": src_id}
+        try:
+            # 1. Lier comme doublon
+            link_resp = await glpi.post("/apirest.php/Ticket_Ticket", {"input": {
+                "tickets_id_1": src_id,
+                "tickets_id_2": target_ticket_id,
+                "link": 2,  # Duplique
+            }})
+            merge_result["link"] = link_resp
+
+            # 2. Copier les suivis vers le ticket cible
+            if add_followups:
+                followups = await glpi.get(f"/apirest.php/Ticket/{src_id}/ITILFollowup")
+                copied = 0
+                if isinstance(followups, list):
+                    for fu in followups:
+                        fu_content = fu.get("content", "")
+                        fu_private = fu.get("is_private", 0)
+                        prefix = f"[Fusionné depuis ticket #{src_id}] "
+                        await glpi.post("/apirest.php/ITILFollowup", {"input": {
+                            "items_id": target_ticket_id,
+                            "itemtype": "Ticket",
+                            "content": prefix + fu_content,
+                            "is_private": fu_private,
+                        }})
+                        copied += 1
+                merge_result["followups_copied"] = copied
+
+            # 3. Fermer le ticket source
+            if close_source:
+                close_msg = f"Ticket fusionné vers le ticket #{target_ticket_id}."
+                await glpi.post("/apirest.php/ITILFollowup", {"input": {
+                    "items_id": src_id,
+                    "itemtype": "Ticket",
+                    "content": close_msg,
+                    "is_private": 0,
+                }})
+                await glpi.put(f"/apirest.php/Ticket/{src_id}", {"input": {
+                    "status": 6,  # Clos
+                }})
+                merge_result["closed"] = True
+
+            results["merged"].append(merge_result)
+        except Exception as e:
+            merge_result["error"] = str(e)
+            results["errors"].append(merge_result)
+
+    return results
+
+
+# ── Catégories ─────────────────────────────────────────────────────────────
 
 @mcp.tool()
 async def list_itil_categories() -> Any:
-    """Liste toutes les catÃ©gories ITIL disponibles (Incident, Demande, Changement, ProblÃ¨me)."""
+    """Liste toutes les catégories ITIL disponibles (Incident, Demande, Changement, Problème)."""
     return await glpi.get("/apirest.php/ITILCategory")
 
 
-# â”€â”€ Suivis (ITILFollowup) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Suivis (ITILFollowup) ──────────────────────────────────────────────────
 
 @mcp.tool()
 async def list_followups(ticket_id: int) -> Any:
@@ -338,7 +539,7 @@ async def list_followups(ticket_id: int) -> Any:
 @mcp.tool()
 async def add_followup(ticket_id: int, content: str, is_private: bool = False) -> Any:
     """
-    Ajoute un suivi Ã  un ticket.
+    Ajoute un suivi à un ticket.
     - is_private : True pour un suivi visible uniquement par les techniciens
     """
     data = {
@@ -354,15 +555,15 @@ async def add_followup(ticket_id: int, content: str, is_private: bool = False) -
 
 @mcp.tool()
 async def get_followup(followup_id: int) -> Any:
-    """Retourne le dÃ©tail d'un suivi spÃ©cifique."""
+    """Retourne le détail d'un suivi spécifique."""
     return await glpi.get(f"/apirest.php/ITILFollowup/{followup_id}")
 
 
-# â”€â”€ TÃ¢ches (ITILTask) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Tâches (ITILTask) ──────────────────────────────────────────────────────
 
 @mcp.tool()
 async def list_tasks(ticket_id: int) -> Any:
-    """Liste toutes les tÃ¢ches d'un ticket."""
+    """Liste toutes les tâches d'un ticket."""
     return await glpi.get(f"/apirest.php/Ticket/{ticket_id}/TicketTask")
 
 
@@ -376,9 +577,9 @@ async def add_task(
     status: int = 1,
 ) -> Any:
     """
-    CrÃ©e une tÃ¢che sur un ticket.
-    - status : 1=Ã€ faire 2=TerminÃ©e
-    - duration_seconds : durÃ©e en secondes (ex. 3600 = 1h)
+    Crée une tâche sur un ticket.
+    - status : 1=À faire 2=Terminée
+    - duration_seconds : durée en secondes (ex. 3600 = 1h)
     """
     input_data: Dict[str, Any] = {
         "tickets_id": ticket_id,
@@ -397,18 +598,18 @@ async def add_task(
 @mcp.tool()
 async def update_task(task_id: int, update_fields: Dict[str, Any]) -> Any:
     """
-    Met Ã  jour une tÃ¢che. Exemples : state (1/2), content, actiontime, users_id_tech
+    Met à jour une tâche. Exemples : state (1/2), content, actiontime, users_id_tech
     """
     return await glpi.put(f"/apirest.php/TicketTask/{task_id}", {"input": update_fields})
 
 
 @mcp.tool()
 async def delete_task(task_id: int) -> Any:
-    """Supprime une tÃ¢che."""
+    """Supprime une tâche."""
     return await glpi.delete(f"/apirest.php/TicketTask/{task_id}")
 
 
-# â”€â”€ Solutions (ITILSolution) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Solutions (ITILSolution) ───────────────────────────────────────────────
 
 @mcp.tool()
 async def get_solution(ticket_id: int) -> Any:
@@ -419,7 +620,7 @@ async def get_solution(ticket_id: int) -> Any:
 @mcp.tool()
 async def add_solution(ticket_id: int, content: str, solution_type_id: Optional[int] = None) -> Any:
     """
-    Poste une solution sur un ticket (le clÃ´ture automatiquement selon la config GLPI).
+    Poste une solution sur un ticket (le clôture automatiquement selon la config GLPI).
     - solution_type_id : ID du type de solution si applicable
     """
     input_data: Dict[str, Any] = {
@@ -433,18 +634,18 @@ async def add_solution(ticket_id: int, content: str, solution_type_id: Optional[
     return await glpi.post("/apirest.php/ITILSolution", {"input": input_data})
 
 
-# â”€â”€ Statistiques â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Statistiques ───────────────────────────────────────────────────────────
 
 @mcp.tool()
 async def stats_by_status() -> Dict[str, Any]:
     """Retourne le nombre de tickets ouverts par statut."""
     tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
-        return {"error": "Impossible de rÃ©cupÃ©rer les tickets", "raw": tickets}
+        return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
     counts: Dict[str, int] = {label: 0 for label in TICKET_STATUS.values()}
     for t in tickets:
-        label = TICKET_STATUS.get(t.get("status"), "Inconnu")
+        label = TICKET_STATUS.get(t.get("status"), LABEL_UNKNOWN)
         counts[label] = counts.get(label, 0) + 1
 
     return {"total": len(tickets), "by_status": counts}
@@ -455,11 +656,11 @@ async def stats_by_type() -> Dict[str, Any]:
     """Retourne le nombre de tickets par type (Incident / Demande de service)."""
     tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
-        return {"error": "Impossible de rÃ©cupÃ©rer les tickets", "raw": tickets}
+        return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
     counts: Dict[str, int] = {label: 0 for label in TICKET_TYPE.values()}
     for t in tickets:
-        label = TICKET_TYPE.get(t.get("type"), "Inconnu")
+        label = TICKET_TYPE.get(t.get("type"), LABEL_UNKNOWN)
         counts[label] = counts.get(label, 0) + 1
 
     return {"total": len(tickets), "by_type": counts}
@@ -467,22 +668,151 @@ async def stats_by_type() -> Dict[str, Any]:
 
 @mcp.tool()
 async def stats_by_priority() -> Dict[str, Any]:
-    """Retourne le nombre de tickets ouverts par prioritÃ©."""
+    """Retourne le nombre de tickets ouverts par priorité."""
     tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
-        return {"error": "Impossible de rÃ©cupÃ©rer les tickets", "raw": tickets}
+        return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
     # Uniquement tickets non-clos
     open_tickets = [t for t in tickets if t.get("status") not in (5, 6)]
     counts: Dict[str, int] = {label: 0 for label in TICKET_PRIORITY.values()}
     for t in open_tickets:
-        label = TICKET_PRIORITY.get(t.get("priority"), "Inconnue")
+        label = TICKET_PRIORITY.get(t.get("priority"), LABEL_UNKNOWN_F)
         counts[label] = counts.get(label, 0) + 1
 
     return {"total_open": len(open_tickets), "by_priority": counts}
 
 
-# â”€â”€ Utilisateurs & Groupes (lecture seule) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+@mcp.tool()
+async def stats_by_category() -> Dict[str, Any]:
+    """Retourne le nombre de tickets par catégorie ITIL."""
+    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    if not isinstance(tickets, list):
+        return {"error": "Impossible de récupérer les tickets", "raw": tickets}
+
+    # Charger les catégories pour les libellés
+    categories = await glpi.get("/apirest.php/ITILCategory", params={"range": "0-9999"})
+    cat_map: Dict[int, str] = {}
+    if isinstance(categories, list):
+        for cat in categories:
+            cat_map[cat.get("id", 0)] = cat.get("completename", cat.get("name", LABEL_UNKNOWN))
+
+    counts: Dict[str, int] = {}
+    for t in tickets:
+        cat_id = t.get("itilcategories_id", 0)
+        label = cat_map.get(cat_id, LABEL_UNCATEGORIZED) if cat_id else LABEL_UNCATEGORIZED
+        counts[label] = counts.get(label, 0) + 1
+
+    return {"total": len(tickets), "by_category": counts}
+
+
+@mcp.tool()
+async def stats_by_assignee() -> Dict[str, Any]:
+    """Retourne le nombre de tickets par technicien assigné."""
+    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    if not isinstance(tickets, list):
+        return {"error": "Impossible de récupérer les tickets", "raw": tickets}
+
+    # Charger les utilisateurs pour les noms
+    users = await glpi.get("/apirest.php/User", params={"range": "0-9999"})
+    user_map: Dict[int, str] = {}
+    if isinstance(users, list):
+        for u in users:
+            user_map[u.get("id", 0)] = u.get("realname", u.get("name", LABEL_UNKNOWN))
+
+    counts: Dict[str, int] = {}
+    for t in tickets:
+        user_id = t.get("users_id_lastupdater", 0)
+        assigned = t.get("_users_id_assign", user_id)
+        if isinstance(assigned, list):
+            for a in assigned:
+                uid = a if isinstance(a, int) else a.get("users_id", 0)
+                label = user_map.get(uid, f"User #{uid}")
+                counts[label] = counts.get(label, 0) + 1
+        else:
+            uid = assigned if isinstance(assigned, int) else 0
+            label = user_map.get(uid, LABEL_UNASSIGNED) if uid else LABEL_UNASSIGNED
+            counts[label] = counts.get(label, 0) + 1
+
+    return {"total": len(tickets), "by_assignee": counts}
+
+
+@mcp.tool()
+async def stats_resolution_time() -> Dict[str, Any]:
+    """Retourne le délai moyen de résolution des tickets résolus ou clos."""
+    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    if not isinstance(tickets, list):
+        return {"error": "Impossible de récupérer les tickets", "raw": tickets}
+
+    from datetime import datetime
+
+    resolved = [t for t in tickets if t.get("status") in (5, 6)]
+    deltas: List[float] = []
+
+    for t in resolved:
+        date_open = t.get("date")
+        date_solved = t.get("solvedate")
+        if date_open and date_solved:
+            try:
+                dt_open = datetime.fromisoformat(date_open)
+                dt_solved = datetime.fromisoformat(date_solved)
+                delta_hours = (dt_solved - dt_open).total_seconds() / 3600
+                if delta_hours >= 0:
+                    deltas.append(delta_hours)
+            except (ValueError, TypeError):
+                continue
+
+    avg_hours = round(sum(deltas) / len(deltas), 2) if deltas else 0
+    return {
+        "resolved_count": len(resolved),
+        "with_dates": len(deltas),
+        "avg_resolution_hours": avg_hours,
+        "avg_resolution_days": round(avg_hours / 24, 2) if avg_hours else 0,
+    }
+
+
+@mcp.tool()
+async def stats_overdue() -> Dict[str, Any]:
+    """
+    Retourne les tickets en retard (date d'échéance dépassée et non résolus).
+    Utilise le champ time_to_resolve de GLPI.
+    """
+    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    if not isinstance(tickets, list):
+        return {"error": "Impossible de récupérer les tickets", "raw": tickets}
+
+    from datetime import datetime
+
+    now = datetime.now()
+    open_tickets = [t for t in tickets if t.get("status") not in (5, 6)]
+    overdue: List[Dict[str, Any]] = []
+
+    for t in open_tickets:
+        ttr = t.get("time_to_resolve")
+        if ttr:
+            try:
+                deadline = datetime.fromisoformat(ttr)
+                if deadline < now:
+                    overdue.append({
+                        "id": t.get("id"),
+                        "name": t.get("name"),
+                        "deadline": ttr,
+                        "overdue_hours": round((now - deadline).total_seconds() / 3600, 1),
+                        "_status_label": TICKET_STATUS.get(t.get("status"), LABEL_UNKNOWN),
+                        "_priority_label": TICKET_PRIORITY.get(t.get("priority"), LABEL_UNKNOWN_F),
+                    })
+            except (ValueError, TypeError):
+                continue
+
+    overdue.sort(key=lambda x: x.get("overdue_hours", 0), reverse=True)
+    return {
+        "total_open": len(open_tickets),
+        "overdue_count": len(overdue),
+        "overdue_tickets": overdue,
+    }
+
+
+# ── Utilisateurs & Groupes (lecture seule) ─────────────────────────────────
 
 @mcp.tool()
 async def get_users() -> Any:
@@ -497,7 +827,7 @@ async def get_groups() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Point d'entrÃ©e
+# Point d'entrée
 # ---------------------------------------------------------------------------
 
 
