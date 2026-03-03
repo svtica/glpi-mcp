@@ -85,8 +85,9 @@ Renseignez ensuite les trois champs dans `config.json` :
 | `GLPI_URL`        | URL de base de votre instance GLPI (sans `/` final) |
 | `GLPI_APP_TOKEN`  | App-Token créé dans la configuration API GLPI      |
 | `GLPI_USER_TOKEN` | User-Token de votre compte GLPI                    |
+| `LANG`            | Langue des libellés : `fr` (défaut) ou `en` — non encodé en base64 |
 
-> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`) à la place du fichier `config.json`.
+> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`) à la place du fichier `config.json`.
 
 ---
 
