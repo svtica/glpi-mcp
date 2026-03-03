@@ -1,5 +1,7 @@
 # GLPI MCP
 
+[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-green.svg)](LICENSE)
+
 Serveur [MCP (Model Context Protocol)](https://modelcontextprotocol.io) permettant à un assistant IA — comme **Claude** — d'interagir directement avec votre instance GLPI via son API REST.
 
 Une fois configuré, Claude peut consulter, créer et mettre à jour des tickets, ajouter des suivis et des tâches, poster des solutions, gérer la base de connaissances, et produire des statistiques, le tout en langage naturel depuis votre conversation.
@@ -415,9 +417,3 @@ dependencies = ["mcp>=1.9.4", "httpx>=0.27"]
 ```
 
 Puis relancez `uv sync` pour mettre à jour l'environnement.
-
----
-
-## Licence
-
-MIT
