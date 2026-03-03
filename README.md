@@ -400,6 +400,22 @@ Certains antivirus ou solutions EDR d'entreprise peuvent catégoriser `uv.exe` c
 
 En alternative, demandez à un collègue ayant `uv` fonctionnel de vous transmettre le dossier `.venv` déjà généré, ce qui évite tout téléchargement.
 
+### Alléger les dépendances
+
+Le projet dépend de `mcp[cli]` qui inclut l'extra `[cli]` (typer, rich, click, shellingham, pygments, markdown-it-py…). Cet extra fournit les commandes de développement `mcp dev` et `mcp inspect`, utiles pour le débogage.
+
+Si vous souhaitez réduire l'empreinte en production (environ 8 packages en moins), modifiez `pyproject.toml` :
+
+```toml
+# Avant (avec outillage CLI)
+dependencies = ["mcp[cli]>=1.9.4", "httpx>=0.27"]
+
+# Après (sans outillage CLI — production allégée)
+dependencies = ["mcp>=1.9.4", "httpx>=0.27"]
+```
+
+Puis relancez `uv sync` pour mettre à jour l'environnement.
+
 ---
 
 ## Licence
