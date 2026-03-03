@@ -197,6 +197,9 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | `create_ticket` | Crée un nouveau ticket |
 | `update_ticket` | Modifie les champs d'un ticket existant |
 | `delete_ticket` | Supprime un ticket |
+| `link_tickets` | Lie deux tickets entre eux (lié, doublon, enfant, parent) |
+| `list_ticket_links` | Liste tous les liens d'un ticket |
+| `merge_tickets` | Fusionne des tickets source vers un ticket cible (copie suivis, lie comme doublon, ferme les sources) |
 
 ### 💬 Suivis
 
@@ -229,6 +232,10 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | `stats_by_status` | Nombre de tickets par statut |
 | `stats_by_type` | Répartition Incidents / Demandes de service |
 | `stats_by_priority` | Tickets ouverts par priorité |
+| `stats_by_category` | Nombre de tickets par catégorie ITIL |
+| `stats_by_assignee` | Tickets par technicien assigné |
+| `stats_resolution_time` | Délai moyen de résolution des tickets |
+| `stats_overdue` | Tickets en retard par rapport au SLA |
 
 ### 📚 Base de connaissances
 
@@ -266,7 +273,15 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 
 > *« Ajoute un suivi sur le ticket #4521 pour informer l'utilisateur que le problème est en cours d'investigation »*
 
+> *« Fusionne les tickets #4530 et #4531 vers le ticket #4521 »*
+>
+> *« Lie le ticket #4530 au ticket #4521 comme doublon »*
+>
 > *« Quelles sont les statistiques de tickets par statut ? »*
+>
+> *« Quel est le délai moyen de résolution des tickets ? »*
+>
+> *« Montre-moi les tickets en retard par rapport au SLA »*
 
 > *« Cherche dans la base de connaissances une solution pour les problèmes VPN »*
 
@@ -305,6 +320,14 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | 4 | Haute |
 | 5 | Très haute |
 | 6 | Majeure |
+
+### Types de liens entre tickets
+| Code | Libellé |
+|------|---------|
+| 1 | Lié à |
+| 2 | Duplique |
+| 3 | Enfant de |
+| 4 | Parent de |
 
 ---
 
