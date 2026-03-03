@@ -68,17 +68,25 @@
 - [x] `stats_by_status` — Nombre de tickets par statut
 - [x] `stats_by_type` — Nombre de tickets par type (Incident / Demande)
 - [x] `stats_by_priority` — Tickets ouverts par priorité
-- [ ] `stats_by_category` — Nombre de tickets par catégorie ITIL
-- [ ] `stats_by_assignee` — Tickets par technicien assigné
-- [ ] `stats_resolution_time` — Délai moyen de résolution
-- [ ] `stats_overdue` — Tickets en retard par rapport au SLA
+- [x] `stats_by_category` — Nombre de tickets par catégorie ITIL
+- [x] `stats_by_assignee` — Tickets par technicien assigné
+- [x] `stats_resolution_time` — Délai moyen de résolution
+- [x] `stats_overdue` — Tickets en retard par rapport au SLA
+
+---
+
+## 🔗 Liaison & Fusion de tickets
+
+- [x] `link_tickets` — Lier deux tickets entre eux (lié, doublon, parent/enfant)
+- [x] `list_ticket_links` — Lister les liens d'un ticket
+- [x] `merge_tickets` — Fusionner des tickets source vers un ticket cible (copie suivis, lie comme doublon, ferme les sources)
 
 ---
 
 ## 🧹 Qualité & Robustesse
 
 - [x] Supprimer les paramètres `base_url` / `app_token` / `session_token` de chaque outil (gérés globalement)
-- [ ] Gestion d'erreurs structurée (codes HTTP GLPI, messages explicites)
+- [x] Gestion d'erreurs structurée (codes HTTP GLPI, messages explicites)
 - [x] Supprimer `add_computer` (hors scope)
 - [x] Ajouter `httpx` dans `pyproject.toml` comme dépendance officielle
 - [x] Rédiger le README (installation, config, liste des outils, exemples Claude)
@@ -91,3 +99,4 @@
 |------|--------|
 | 2026-02-23 | Analyse initiale du projet, définition du scope tickets |
 | 2026-02-23 | Refactoring server.py : session globale, variables d'env, mappings lisibles, followups, tâches, solutions, recherche avancée, stats de base |
+| 2026-03-03 | Gestion d'erreurs structurée dans _request(), fusion de tickets (merge_tickets, link_tickets, list_ticket_links), stats complètes (stats_by_category, stats_by_assignee, stats_resolution_time, stats_overdue) |
