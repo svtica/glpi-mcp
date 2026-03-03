@@ -3,5 +3,6 @@
     "_how_to_encode": "Encodez chaque valeur avec : [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes('votre_valeur'))",
     "GLPI_URL": "",
     "GLPI_APP_TOKEN": "",
-    "GLPI_USER_TOKEN": ""
+    "GLPI_USER_TOKEN": "",
+    "LANG": "fr"
 }

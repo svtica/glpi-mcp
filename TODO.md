@@ -90,6 +90,8 @@
 - [x] Supprimer `add_computer` (hors scope)
 - [x] Ajouter `httpx` dans `pyproject.toml` comme dépendance officielle
 - [x] Rédiger le README (installation, config, liste des outils, exemples Claude)
+- [x] Support multilingue des libellés (fr / en) via `LANG` dans config.json ou `GLPI_LANG` en variable d'env
+- [x] Correction de l'encodage UTF-8 (mojibake dans les docstrings et commentaires)
 
 ---
 
@@ -100,3 +102,4 @@
 | 2026-02-23 | Analyse initiale du projet, définition du scope tickets |
 | 2026-02-23 | Refactoring server.py : session globale, variables d'env, mappings lisibles, followups, tâches, solutions, recherche avancée, stats de base |
 | 2026-03-03 | Gestion d'erreurs structurée dans _request(), fusion de tickets (merge_tickets, link_tickets, list_ticket_links), stats complètes (stats_by_category, stats_by_assignee, stats_resolution_time, stats_overdue) |
+| 2026-03-03 | Support multilingue des libellés (fr/en), correction de l'encodage UTF-8 |
