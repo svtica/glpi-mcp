@@ -85,8 +85,9 @@ Renseignez ensuite les trois champs dans `config.json` :
 | `GLPI_URL`        | URL de base de votre instance GLPI (sans `/` final) |
 | `GLPI_APP_TOKEN`  | App-Token créé dans la configuration API GLPI      |
 | `GLPI_USER_TOKEN` | User-Token de votre compte GLPI                    |
+| `LANG`            | Langue des libellés : `fr` (défaut) ou `en` — non encodé en base64 |
 
-> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`) à la place du fichier `config.json`.
+> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`) à la place du fichier `config.json`.
 
 ---
 
@@ -197,6 +198,9 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | `create_ticket` | Crée un nouveau ticket |
 | `update_ticket` | Modifie les champs d'un ticket existant |
 | `delete_ticket` | Supprime un ticket |
+| `link_tickets` | Lie deux tickets entre eux (lié, doublon, enfant, parent) |
+| `list_ticket_links` | Liste tous les liens d'un ticket |
+| `merge_tickets` | Fusionne des tickets source vers un ticket cible (copie suivis, lie comme doublon, ferme les sources) |
 
 ### 💬 Suivis
 
@@ -229,6 +233,10 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | `stats_by_status` | Nombre de tickets par statut |
 | `stats_by_type` | Répartition Incidents / Demandes de service |
 | `stats_by_priority` | Tickets ouverts par priorité |
+| `stats_by_category` | Nombre de tickets par catégorie ITIL |
+| `stats_by_assignee` | Tickets par technicien assigné |
+| `stats_resolution_time` | Délai moyen de résolution des tickets |
+| `stats_overdue` | Tickets en retard par rapport au SLA |
 
 ### 📚 Base de connaissances
 
@@ -266,7 +274,15 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 
 > *« Ajoute un suivi sur le ticket #4521 pour informer l'utilisateur que le problème est en cours d'investigation »*
 
+> *« Fusionne les tickets #4530 et #4531 vers le ticket #4521 »*
+>
+> *« Lie le ticket #4530 au ticket #4521 comme doublon »*
+>
 > *« Quelles sont les statistiques de tickets par statut ? »*
+>
+> *« Quel est le délai moyen de résolution des tickets ? »*
+>
+> *« Montre-moi les tickets en retard par rapport au SLA »*
 
 > *« Cherche dans la base de connaissances une solution pour les problèmes VPN »*
 
@@ -305,6 +321,14 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | 4 | Haute |
 | 5 | Très haute |
 | 6 | Majeure |
+
+### Types de liens entre tickets
+| Code | Libellé |
+|------|---------|
+| 1 | Lié à |
+| 2 | Duplique |
+| 3 | Enfant de |
+| 4 | Parent de |
 
 ---
 
@@ -375,6 +399,22 @@ Certains antivirus ou solutions EDR d'entreprise peuvent catégoriser `uv.exe` c
 - Demandez également d'autoriser les domaines : `pypi.org`, `files.pythonhosted.org`, `astral.sh`
 
 En alternative, demandez à un collègue ayant `uv` fonctionnel de vous transmettre le dossier `.venv` déjà généré, ce qui évite tout téléchargement.
+
+### Alléger les dépendances
+
+Le projet dépend de `mcp[cli]` qui inclut l'extra `[cli]` (typer, rich, click, shellingham, pygments, markdown-it-py…). Cet extra fournit les commandes de développement `mcp dev` et `mcp inspect`, utiles pour le débogage.
+
+Si vous souhaitez réduire l'empreinte en production (environ 8 packages en moins), modifiez `pyproject.toml` :
+
+```toml
+# Avant (avec outillage CLI)
+dependencies = ["mcp[cli]>=1.9.4", "httpx>=0.27"]
+
+# Après (sans outillage CLI — production allégée)
+dependencies = ["mcp>=1.9.4", "httpx>=0.27"]
+```
+
+Puis relancez `uv sync` pour mettre à jour l'environnement.
 
 ---
 
