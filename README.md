@@ -4,6 +4,8 @@
 
 Serveur [MCP (Model Context Protocol)](https://modelcontextprotocol.io) permettant à un assistant IA — comme **Claude** — d'interagir directement avec votre instance GLPI via son API REST.
 
+Compatible **GLPI 10** (endpoint `apirest.php`) et **GLPI 11** (endpoint `api.php/v1`).
+
 Une fois configuré, Claude peut consulter, créer et mettre à jour des tickets, ajouter des suivis et des tâches, poster des solutions, gérer la base de connaissances, et produire des statistiques, le tout en langage naturel depuis votre conversation.
 
 ---
@@ -12,7 +14,7 @@ Une fois configuré, Claude peut consulter, créer et mettre à jour des tickets
 
 ### 1. GLPI
 
-- GLPI **9.5 ou supérieur** (l'API REST est activée par défaut à partir de cette version)
+- GLPI **10.x** ou **11.x** (l'API REST est activée par défaut)
 - L'API REST doit être activée : **Configuration → Générale → API → Activer l'API Rest → Oui**
 - Un **App-Token** créé dans GLPI : **Configuration → Générale → API → Ajouter un client API**
 - Un **User-Token** associé à votre compte : **Mon profil → API → Régénérer**
@@ -88,8 +90,18 @@ Renseignez ensuite les trois champs dans `config.json` :
 | `GLPI_APP_TOKEN`  | App-Token créé dans la configuration API GLPI      |
 | `GLPI_USER_TOKEN` | User-Token de votre compte GLPI                    |
 | `LANG`            | Langue des libellés : `fr` (défaut) ou `en` — non encodé en base64 |
+| `GLPI_VERSION`    | Version GLPI : `10` (défaut) ou `11` — non encodé en base64 |
 
-> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`) à la place du fichier `config.json`.
+> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`, `GLPI_VERSION`) à la place du fichier `config.json`.
+
+### Versions GLPI supportées
+
+| Version | Endpoint API | Authentification |
+|---------|-------------|------------------|
+| **GLPI 10** | `apirest.php` | App-Token + User-Token → Session-Token |
+| **GLPI 11** | `api.php/v1` | App-Token + User-Token → Session-Token (même mécanisme) |
+
+Le champ `GLPI_VERSION` détermine quel préfixe d'endpoint est utilisé. Les deux versions utilisent la même authentification par session (`initSession`). Tous les outils sont compatibles avec les deux versions.
 
 ---
 
