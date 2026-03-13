@@ -2,7 +2,15 @@
 
 [![License: Unlicense](https://img.shields.io/badge/license-Unlicense-green.svg)](LICENSE)
 
+🇫🇷 **[Français](#français)** | 🇬🇧 **[English](#english)**
+
+---
+
+# Français
+
 Serveur [MCP (Model Context Protocol)](https://modelcontextprotocol.io) permettant à un assistant IA — comme **Claude** — d'interagir directement avec votre instance GLPI via son API REST.
+
+Compatible **GLPI 10** (endpoint `apirest.php`) et **GLPI 11** (endpoint `api.php/v1`).
 
 Une fois configuré, Claude peut consulter, créer et mettre à jour des tickets, ajouter des suivis et des tâches, poster des solutions, gérer la base de connaissances, et produire des statistiques, le tout en langage naturel depuis votre conversation.
 
@@ -12,7 +20,7 @@ Une fois configuré, Claude peut consulter, créer et mettre à jour des tickets
 
 ### 1. GLPI
 
-- GLPI **9.5 ou supérieur** (l'API REST est activée par défaut à partir de cette version)
+- GLPI **10.x** ou **11.x** (l'API REST est activée par défaut)
 - L'API REST doit être activée : **Configuration → Générale → API → Activer l'API Rest → Oui**
 - Un **App-Token** créé dans GLPI : **Configuration → Générale → API → Ajouter un client API**
 - Un **User-Token** associé à votre compte : **Mon profil → API → Régénérer**
@@ -80,7 +88,7 @@ Les valeurs doivent être encodées en **base64** :
 echo -n "https://glpi.monentreprise.ca" | base64
 ```
 
-Renseignez ensuite les trois champs dans `config.json` :
+Renseignez ensuite les champs dans `config.json` :
 
 | Champ             | Description                                        |
 |-------------------|----------------------------------------------------|
@@ -88,8 +96,18 @@ Renseignez ensuite les trois champs dans `config.json` :
 | `GLPI_APP_TOKEN`  | App-Token créé dans la configuration API GLPI      |
 | `GLPI_USER_TOKEN` | User-Token de votre compte GLPI                    |
 | `LANG`            | Langue des libellés : `fr` (défaut) ou `en` — non encodé en base64 |
+| `GLPI_VERSION`    | Version GLPI : `10` (défaut) ou `11` — non encodé en base64 |
 
-> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`) à la place du fichier `config.json`.
+> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`, `GLPI_VERSION`) à la place du fichier `config.json`.
+
+### Versions GLPI supportées
+
+| Version | Endpoint API | Authentification |
+|---------|-------------|------------------|
+| **GLPI 10** | `apirest.php` | App-Token + User-Token → Session-Token |
+| **GLPI 11** | `api.php/v1` | App-Token + User-Token → Session-Token (même mécanisme) |
+
+Le champ `GLPI_VERSION` détermine quel préfixe d'endpoint est utilisé. Les deux versions utilisent la même authentification par session (`initSession`). Tous les outils sont compatibles avec les deux versions.
 
 ---
 
@@ -417,3 +435,436 @@ dependencies = ["mcp>=1.9.4", "httpx>=0.27"]
 ```
 
 Puis relancez `uv sync` pour mettre à jour l'environnement.
+
+---
+---
+
+# English
+
+[MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that allows an AI assistant — such as **Claude** — to interact directly with your GLPI instance via its REST API.
+
+Compatible with **GLPI 10** (endpoint `apirest.php`) and **GLPI 11** (endpoint `api.php/v1`).
+
+Once configured, Claude can view, create and update tickets, add followups and tasks, post solutions, manage the knowledge base, and generate statistics, all in natural language from your conversation.
+
+---
+
+## Prerequisites
+
+### 1. GLPI
+
+- GLPI **10.x** or **11.x** (REST API is enabled by default)
+- REST API must be enabled: **Setup → General → API → Enable Rest API → Yes**
+- An **App-Token** created in GLPI: **Setup → General → API → Add an API client**
+- A **User-Token** associated with your account: **My profile → API → Regenerate**
+
+> ⚠️ The account associated with the User-Token must have sufficient permissions on tickets in GLPI (read, write, delete as needed).
+
+### 2. Python
+
+- Python **3.12 or higher**
+- [uv](https://docs.astral.sh/uv/) (recommended)
+
+```bash
+# Check Python version
+python --version
+
+# Install uv if needed
+pip install uv
+```
+
+### 3. Claude Desktop
+
+- [Claude Desktop](https://claude.ai/download) installed on your machine
+- A Claude account with access to **MCP integrations** (Pro plan or higher)
+
+---
+
+## Installation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/svtica/glpi-mcp.git
+cd glpi-mcp
+```
+
+### 2. Install dependencies
+
+```bash
+uv sync
+```
+
+---
+
+## Configuration (per user)
+
+The server reads its credentials from a **`config.json`** file located in the same folder as `server.py`. This file is **individual to each user** and must never be version-controlled (it is in `.gitignore`).
+
+### Create your config.json
+
+Copy the example file and fill in your values:
+
+```bash
+cp config.example.json config.json
+```
+
+Values must be encoded in **base64**:
+
+**PowerShell:**
+```powershell
+[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("https://glpi.mycompany.com"))
+```
+
+**Linux / macOS:**
+```bash
+echo -n "https://glpi.mycompany.com" | base64
+```
+
+Then fill in the fields in `config.json`:
+
+| Field             | Description                                        |
+|-------------------|----------------------------------------------------|
+| `GLPI_URL`        | Base URL of your GLPI instance (without trailing `/`) |
+| `GLPI_APP_TOKEN`  | App-Token created in GLPI API configuration        |
+| `GLPI_USER_TOKEN` | User-Token from your GLPI account                  |
+| `LANG`            | Label language: `fr` (default) or `en` — not base64-encoded |
+| `GLPI_VERSION`    | GLPI version: `10` (default) or `11` — not base64-encoded |
+
+> You can also use **environment variables** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`, `GLPI_VERSION`) instead of the `config.json` file.
+
+### Supported GLPI versions
+
+| Version | API Endpoint | Authentication |
+|---------|-------------|----------------|
+| **GLPI 10** | `apirest.php` | App-Token + User-Token → Session-Token |
+| **GLPI 11** | `api.php/v1` | App-Token + User-Token → Session-Token (same mechanism) |
+
+The `GLPI_VERSION` field determines which endpoint prefix is used. Both versions use the same session-based authentication (`initSession`). All tools are compatible with both versions.
+
+---
+
+## Integration with Claude Desktop
+
+### Method 1 — Claude Extensions (recommended)
+
+Copy the project contents to your Claude Extensions folder:
+
+```
+%APPDATA%\Claude\Claude Extensions\ant.dir.svtica.glpi-mcp\
+```
+
+Create your personal `config.json` with your credentials (see previous section).
+
+The folder must contain a `manifest.json` file:
+
+```json
+{
+  "manifest_version": "0.2",
+  "name": "GLPI-MCP",
+  "version": "0.1.0",
+  "description": "MCP server for GLPI integration",
+  "author": { "name": "Your Name", "url": "" },
+  "server": {
+    "type": "python",
+    "entry_point": "server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["--directory", "${__dirname}", "run", "python", "server.py"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. Each user on the machine copies their own files to their `%APPDATA%` folder with their own `config.json`.
+
+### Method 2 — claude_desktop_config.json (manual)
+
+Open the Claude Desktop configuration file:
+
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Add the `mcpServers` section:
+
+**Windows**
+```json
+{
+  "mcpServers": {
+    "glpi": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Path\\to\\glpi-mcp",
+        "run",
+        "python",
+        "server.py"
+      ]
+    }
+  },
+  "preferences": {
+    "coworkScheduledTasksEnabled": false,
+    "sidebarMode": "code"
+  }
+}
+```
+
+**macOS / Linux**
+```json
+{
+  "mcpServers": {
+    "glpi": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/glpi-mcp",
+        "run",
+        "python",
+        "server.py"
+      ]
+    }
+  }
+}
+```
+
+> ⚠️ Make sure the JSON is valid — a missing brace or comma is enough to prevent Claude Desktop from loading the configuration. Use a JSON validator if needed.
+
+Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear in the Claude toolbar indicating the MCP server is connected.
+
+---
+
+## Available tools
+
+### 🔐 Session
+
+| Tool | Description |
+|------|-------------|
+| `kill_session` | Gracefully closes the active GLPI session |
+
+### 🎫 Tickets
+
+| Tool | Description |
+|------|-------------|
+| `list_tickets` | List tickets with pagination and filters (status, type) |
+| `get_ticket` | Full ticket details with readable labels |
+| `search_tickets` | Advanced search by keywords, status, type, category, assignee |
+| `create_ticket` | Create a new ticket |
+| `update_ticket` | Update fields of an existing ticket |
+| `delete_ticket` | Delete a ticket |
+| `link_tickets` | Link two tickets (linked, duplicate, child, parent) |
+| `list_ticket_links` | List all links for a ticket |
+| `merge_tickets` | Merge source tickets into a target (copies followups, links as duplicate, closes sources) |
+
+### 💬 Followups
+
+| Tool | Description |
+|------|-------------|
+| `list_followups` | List all followups for a ticket |
+| `get_followup` | Followup details |
+| `add_followup` | Add a followup (public or private) |
+
+### ✅ Tasks
+
+| Tool | Description |
+|------|-------------|
+| `list_tasks` | List tasks for a ticket |
+| `add_task` | Create a task on a ticket |
+| `update_task` | Update a task (status, duration, assignee) |
+| `delete_task` | Delete a task |
+
+### 💡 Solutions
+
+| Tool | Description |
+|------|-------------|
+| `get_solution` | Read the solution for a ticket |
+| `add_solution` | Post a solution (closes the ticket per GLPI config) |
+
+### 📊 Statistics
+
+| Tool | Description |
+|------|-------------|
+| `stats_by_status` | Ticket count by status |
+| `stats_by_type` | Incidents vs Service Requests breakdown |
+| `stats_by_priority` | Open tickets by priority |
+| `stats_by_category` | Ticket count by ITIL category |
+| `stats_by_assignee` | Tickets per assigned technician |
+| `stats_resolution_time` | Average ticket resolution time |
+| `stats_overdue` | Tickets overdue against SLA |
+
+### 📚 Knowledge Base
+
+| Tool | Description |
+|------|-------------|
+| `list_kb_articles` | List articles with pagination |
+| `get_kb_article` | Full article details |
+| `search_kb_articles` | Search by keywords (title and content) |
+| `create_kb_article` | Create a new article (title, HTML content, category, FAQ) |
+| `update_kb_article` | Update an existing article |
+| `list_kb_categories` | List knowledge base categories |
+| `get_kb_article_visibility` | Read visibility rules for an article (profiles, groups, users, entities) |
+| `add_kb_article_visibility_profile` | Add a profile to an article's visibility |
+| `add_kb_article_visibility_group` | Add a group to an article's visibility |
+| `update_kb_article_visibility_profile` | Update an existing profile visibility rule |
+| `update_kb_article_visibility_group` | Update an existing group visibility rule |
+
+> **Note:** Deleting visibility rules is intentionally not exposed in order to preserve a history of procedures, even obsolete ones.
+
+### 📋 Reference data
+
+| Tool | Description |
+|------|-------------|
+| `list_itil_categories` | List available ITIL categories |
+| `get_users` | List GLPI users |
+| `get_groups` | List GLPI groups |
+
+---
+
+## Usage examples with Claude
+
+> *"Show me all open high-priority incidents"*
+
+> *"Create a service request ticket for installing Adobe Acrobat for Jane Smith"*
+
+> *"Add a followup to ticket #4521 to inform the user that the issue is being investigated"*
+
+> *"Merge tickets #4530 and #4531 into ticket #4521"*
+>
+> *"Link ticket #4530 to ticket #4521 as a duplicate"*
+>
+> *"What are the ticket statistics by status?"*
+>
+> *"What is the average ticket resolution time?"*
+>
+> *"Show me tickets that are overdue against the SLA"*
+
+> *"Search the knowledge base for VPN troubleshooting solutions"*
+
+> *"Who can see knowledge base article #120?"*
+
+> *"Add the Technicians group to the visibility of article #120"*
+
+> *"Close ticket #4102 with the solution: service restart resolved the issue"*
+
+---
+
+## Reference mappings
+
+### Statuses
+| Code | Label (fr) | Label (en) |
+|------|------------|------------|
+| 1 | Nouveau | New |
+| 2 | En cours (attribué) | In progress (assigned) |
+| 3 | En cours (planifié) | In progress (planned) |
+| 4 | En attente | Pending |
+| 5 | Résolu | Solved |
+| 6 | Clos | Closed |
+
+### Types
+| Code | Label (fr) | Label (en) |
+|------|------------|------------|
+| 1 | Incident | Incident |
+| 2 | Demande de service | Service request |
+
+### Priorities / Urgencies / Impacts
+| Code | Label (fr) | Label (en) |
+|------|------------|------------|
+| 1 | Très basse | Very low |
+| 2 | Basse | Low |
+| 3 | Moyenne | Medium |
+| 4 | Haute | High |
+| 5 | Très haute | Very high |
+| 6 | Majeure | Major |
+
+### Ticket link types
+| Code | Label (fr) | Label (en) |
+|------|------------|------------|
+| 1 | Lié à | Linked to |
+| 2 | Duplique | Duplicates |
+| 3 | Enfant de | Child of |
+| 4 | Parent de | Parent of |
+
+---
+
+## Troubleshooting
+
+### Server does not appear in Claude Desktop
+
+- Check the JSON syntax of the configuration file (no missing or extra commas/braces)
+- Verify the folder path is correct and absolute
+- Fully restart Claude Desktop
+- Make sure the `%APPDATA%\Claude\connectors\` folder exists (create it if needed)
+
+### 401 error on every call
+
+- Verify that `GLPI_APP_TOKEN` and `GLPI_USER_TOKEN` are correct in your `config.json`
+- Check that the REST API is enabled in GLPI
+- Verify that the API client in GLPI is active and the IP is authorized
+
+### Connection error / timeout
+
+- Verify that `GLPI_URL` is reachable from the machine running the server
+- Check that no firewall is blocking the connection
+
+### Corporate environment — SSL-intercepting proxy (Zscaler, Forcepoint, etc.)
+
+In corporate environments, an SSL proxy may intercept HTTPS connections and replace certificates with an internal certificate. This causes the following error when installing dependencies with `uv`:
+
+```
+× Failed to download `python-dotenv==X.X.X`
+╰─▶ invalid peer certificate: UnknownIssuer
+```
+
+**Solution:** Force `uv` to use the Windows certificate store with the `UV_NATIVE_TLS` environment variable.
+
+To test manually in PowerShell:
+```powershell
+$env:UV_NATIVE_TLS=1
+uv run python server.py
+```
+
+To have Claude Desktop automatically pass this variable when starting the server, add an `env` section to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "glpi": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Path\\to\\glpi-mcp",
+        "run",
+        "python",
+        "server.py"
+      ],
+      "env": {
+        "UV_NATIVE_TLS": "1"
+      }
+    }
+  }
+}
+```
+
+### Corporate environment — Antivirus / EDR blocking uv (Riskware)
+
+Some corporate antivirus or EDR solutions may categorize `uv.exe` as **Riskware** because it downloads executables and packages from the Internet. If `uv` is blocked by your security solution:
+
+- Contact your IT team to add an exception for `uv.exe` (located at `%USERPROFILE%\.local\bin\uv.exe`)
+- Also request authorization for the domains: `pypi.org`, `files.pythonhosted.org`, `astral.sh`
+
+As an alternative, ask a colleague with a working `uv` to share the `.venv` folder, which avoids any downloads.
+
+### Reducing dependencies
+
+The project depends on `mcp[cli]` which includes the `[cli]` extra (typer, rich, click, shellingham, pygments, markdown-it-py…). This extra provides the development commands `mcp dev` and `mcp inspect`, useful for debugging.
+
+If you want to reduce the footprint in production (about 8 fewer packages), modify `pyproject.toml`:
+
+```toml
+# Before (with CLI tooling)
+dependencies = ["mcp[cli]>=1.9.4", "httpx>=0.27"]
+
+# After (without CLI tooling — lightweight production)
+dependencies = ["mcp>=1.9.4", "httpx>=0.27"]
+```
+
+Then run `uv sync` again to update the environment.
