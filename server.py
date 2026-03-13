@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import json
 import logging
 import os
@@ -249,7 +249,17 @@ def _enrich_ticket(ticket: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Serveur MCP
 # ---------------------------------------------------------------------------
-mcp = FastMCP("GLPI MCP")
+mcp = FastMCP(
+    "GLPI MCP",
+    instructions=(
+        "IMPORTANT: All text content fields sent to GLPI (such as 'content', 'answer', "
+        "'name', etc.) MUST be formatted in GLPI-compatible HTML. Never use Markdown syntax. "
+        "Use HTML tags instead: <p> for paragraphs, <strong> for bold, <em> for italic, "
+        "<ul>/<li> for bullet lists, <ol>/<li> for numbered lists, <h1>-<h3> for headings, "
+        "<code> for inline code, <pre> for code blocks, <br> for line breaks. "
+        "Do NOT use #, **, *, ``` or any other Markdown syntax in content fields."
+    ),
+)
 glpi = GLPIClient()
 
 
@@ -278,7 +288,7 @@ async def list_tickets(
     """
     Liste les tickets avec pagination optionnelle.
     - status : 1=Nouveau 2=En cours(attribué) 3=En cours(planifié) 4=En attente 5=Résolu 6=Clos
-    - ticket_type : 1=Incident 2=Demande de service
+    - type : 1=Incident 2=Demande de service
     - range_start / range_limit : pagination
     """
     params: Dict[str, Any] = {
@@ -373,7 +383,7 @@ async def search_tickets(
 async def create_ticket(
     name: str,
     content: str,
-    ticket_type: int = 1,
+    type: int = 1,
     category_id: Optional[int] = None,
     priority: int = 3,
     assigned_user_id: Optional[int] = None,
@@ -381,13 +391,13 @@ async def create_ticket(
 ) -> Any:
     """
     Crée un nouveau ticket.
-    - ticket_type : 1=Incident 2=Demande de service
+    - type : 1=Incident 2=Demande de service
     - priority : 1 (très basse) → 6 (majeure)
     """
     input_data: Dict[str, Any] = {
         "name": name,
         "content": content,
-        "type": ticket_type,
+        "type": type,
         "priority": priority,
     }
     if category_id:
