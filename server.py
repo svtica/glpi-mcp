@@ -25,9 +25,11 @@ def _load_config() -> Dict[str, str]:
         for key in ("GLPI_URL", "GLPI_APP_TOKEN", "GLPI_USER_TOKEN"):
             if key in raw:
                 decoded[key] = base64.b64decode(raw[key]).decode("utf-8")
-        # LANG n'est pas encodé en base64
+        # LANG et GLPI_VERSION ne sont pas encodés en base64
         if "LANG" in raw:
             decoded["LANG"] = raw["LANG"]
+        if "GLPI_VERSION" in raw:
+            decoded["GLPI_VERSION"] = raw["GLPI_VERSION"]
         logger.info("Configuration chargée depuis config.json")
         return decoded
     logger.info("config.json absent, utilisation des variables d'environnement")
@@ -38,6 +40,7 @@ GLPI_URL        = _config.get("GLPI_URL",        os.environ.get("GLPI_URL", ""))
 GLPI_APP_TOKEN  = _config.get("GLPI_APP_TOKEN",  os.environ.get("GLPI_APP_TOKEN", ""))
 GLPI_USER_TOKEN = _config.get("GLPI_USER_TOKEN", os.environ.get("GLPI_USER_TOKEN", ""))
 LANG            = _config.get("LANG",            os.environ.get("GLPI_LANG", "fr")).lower()
+GLPI_VERSION    = _config.get("GLPI_VERSION",    os.environ.get("GLPI_VERSION", "10"))
 
 # ---------------------------------------------------------------------------
 # Mappings GLPI — libellés lisibles (fr / en)
@@ -133,6 +136,16 @@ LABEL_UNCATEGORIZED = _lang_data["UNCATEGORIZED"]
 logger.info("Langue des libellés : %s", LANG)
 
 # ---------------------------------------------------------------------------
+# Préfixe API selon la version GLPI
+# ---------------------------------------------------------------------------
+if GLPI_VERSION == "11":
+    _API_PREFIX = "/api.php/v1"
+else:
+    _API_PREFIX = "/apirest.php"
+
+logger.info("Version GLPI : %s (préfixe API : %s)", GLPI_VERSION, _API_PREFIX)
+
+# ---------------------------------------------------------------------------
 # Session GLPI (initialisée une fois au démarrage)
 # ---------------------------------------------------------------------------
 _session_token: Optional[str] = None
@@ -141,7 +154,7 @@ _session_token: Optional[str] = None
 async def _init_session() -> str:
     """Initialise la session GLPI et retourne le session_token."""
     global _session_token
-    url = f"{GLPI_URL}/apirest.php/initSession"
+    url = f"{GLPI_URL}{_API_PREFIX}/initSession"
     headers = {
         "App-Token": GLPI_APP_TOKEN,
         "Authorization": f"user_token {GLPI_USER_TOKEN}",
@@ -166,10 +179,14 @@ async def _get_session() -> str:
 # Client GLPI
 # ---------------------------------------------------------------------------
 class GLPIClient:
-    """Client async pour l'API REST GLPI."""
+    """Client async pour l'API REST GLPI (compatible V10 et V11)."""
 
     def __init__(self) -> None:
-        pass
+        self.prefix = _API_PREFIX
+
+    def _path(self, endpoint: str) -> str:
+        """Construit le chemin complet avec le préfixe API."""
+        return f"{self.prefix}{endpoint}"
 
     async def _headers(self) -> Dict[str, str]:
         return {
@@ -223,17 +240,17 @@ class GLPIClient:
 
             return body
 
-    async def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        return await self._request("GET", path, params=params)
+    async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        return await self._request("GET", self._path(endpoint), params=params)
 
-    async def post(self, path: str, data: Dict[str, Any]) -> Any:
-        return await self._request("POST", path, json=data)
+    async def post(self, endpoint: str, data: Dict[str, Any]) -> Any:
+        return await self._request("POST", self._path(endpoint), json=data)
 
-    async def put(self, path: str, data: Dict[str, Any]) -> Any:
-        return await self._request("PUT", path, json=data)
+    async def put(self, endpoint: str, data: Dict[str, Any]) -> Any:
+        return await self._request("PUT", self._path(endpoint), json=data)
 
-    async def delete(self, path: str) -> Any:
-        return await self._request("DELETE", path)
+    async def delete(self, endpoint: str) -> Any:
+        return await self._request("DELETE", self._path(endpoint))
 
 
 def _enrich_ticket(ticket: Dict[str, Any]) -> Dict[str, Any]:
@@ -271,7 +288,7 @@ async def kill_session() -> Dict[str, str]:
     global _session_token
     if not _session_token:
         return {"message": "Aucune session active."}
-    await glpi.get("/apirest.php/killSession")
+    await glpi.get("/killSession")
     _session_token = None
     return {"message": "Session fermée."}
 
@@ -299,7 +316,7 @@ async def list_tickets(
     if ticket_type is not None:
         params["searchText[type]"] = ticket_type
 
-    result = await glpi.get("/apirest.php/Ticket", params=params)
+    result = await glpi.get("/Ticket", params=params)
     if isinstance(result, list):
         return [_enrich_ticket(t) for t in result]
     return result
@@ -308,7 +325,7 @@ async def list_tickets(
 @mcp.tool()
 async def get_ticket(ticket_id: int) -> Dict[str, Any]:
     """Retourne le détail complet d'un ticket, avec libellés lisibles."""
-    ticket = await glpi.get(f"/apirest.php/Ticket/{ticket_id}")
+    ticket = await glpi.get(f"/Ticket/{ticket_id}")
     return _enrich_ticket(ticket)
 
 
@@ -376,7 +393,7 @@ async def search_tickets(
     for c in criteria:
         params.update(c)
 
-    return await glpi.get("/apirest.php/search/Ticket", params=params)
+    return await glpi.get("/search/Ticket", params=params)
 
 
 @mcp.tool()
@@ -407,7 +424,7 @@ async def create_ticket(
     if assigned_group_id:
         input_data["_groups_id_assign"] = assigned_group_id
 
-    return await glpi.post("/apirest.php/Ticket", {"input": input_data})
+    return await glpi.post("/Ticket", {"input": input_data})
 
 
 @mcp.tool()
@@ -416,13 +433,13 @@ async def update_ticket(ticket_id: int, update_fields: Dict[str, Any]) -> Any:
     Met à jour un ticket. Passer uniquement les champs à modifier.
     Exemples de champs : status, priority, name, content, itilcategories_id
     """
-    return await glpi.put(f"/apirest.php/Ticket/{ticket_id}", {"input": update_fields})
+    return await glpi.put(f"/Ticket/{ticket_id}", {"input": update_fields})
 
 
 @mcp.tool()
 async def delete_ticket(ticket_id: int) -> Any:
     """Supprime un ticket par son ID."""
-    return await glpi.delete(f"/apirest.php/Ticket/{ticket_id}")
+    return await glpi.delete(f"/Ticket/{ticket_id}")
 
 
 # ── Liaison de tickets ─────────────────────────────────────────────────────
@@ -437,7 +454,7 @@ async def link_tickets(
     Crée un lien entre deux tickets.
     - link_type : 1=Lié à, 2=Duplique, 3=Enfant de, 4=Parent de
     """
-    return await glpi.post("/apirest.php/Ticket_Ticket", {"input": {
+    return await glpi.post("/Ticket_Ticket", {"input": {
         "tickets_id_1": ticket_id_1,
         "tickets_id_2": ticket_id_2,
         "link": link_type,
@@ -447,7 +464,7 @@ async def link_tickets(
 @mcp.tool()
 async def list_ticket_links(ticket_id: int) -> Any:
     """Liste tous les liens d'un ticket avec d'autres tickets."""
-    result = await glpi.get(f"/apirest.php/Ticket/{ticket_id}/Ticket_Ticket")
+    result = await glpi.get(f"/Ticket/{ticket_id}/Ticket_Ticket")
     if isinstance(result, list):
         for link in result:
             link["_link_label"] = TICKET_LINK_TYPE.get(link.get("link"), LABEL_UNKNOWN)
@@ -483,7 +500,7 @@ async def merge_tickets(
         merge_result: Dict[str, Any] = {"source_ticket_id": src_id}
         try:
             # 1. Lier comme doublon
-            link_resp = await glpi.post("/apirest.php/Ticket_Ticket", {"input": {
+            link_resp = await glpi.post("/Ticket_Ticket", {"input": {
                 "tickets_id_1": src_id,
                 "tickets_id_2": target_ticket_id,
                 "link": 2,  # Duplique
@@ -492,14 +509,14 @@ async def merge_tickets(
 
             # 2. Copier les suivis vers le ticket cible
             if add_followups:
-                followups = await glpi.get(f"/apirest.php/Ticket/{src_id}/ITILFollowup")
+                followups = await glpi.get(f"/Ticket/{src_id}/ITILFollowup")
                 copied = 0
                 if isinstance(followups, list):
                     for fu in followups:
                         fu_content = fu.get("content", "")
                         fu_private = fu.get("is_private", 0)
                         prefix = f"[Fusionné depuis ticket #{src_id}] "
-                        await glpi.post("/apirest.php/ITILFollowup", {"input": {
+                        await glpi.post("/ITILFollowup", {"input": {
                             "items_id": target_ticket_id,
                             "itemtype": "Ticket",
                             "content": prefix + fu_content,
@@ -511,13 +528,13 @@ async def merge_tickets(
             # 3. Fermer le ticket source
             if close_source:
                 close_msg = f"Ticket fusionné vers le ticket #{target_ticket_id}."
-                await glpi.post("/apirest.php/ITILFollowup", {"input": {
+                await glpi.post("/ITILFollowup", {"input": {
                     "items_id": src_id,
                     "itemtype": "Ticket",
                     "content": close_msg,
                     "is_private": 0,
                 }})
-                await glpi.put(f"/apirest.php/Ticket/{src_id}", {"input": {
+                await glpi.put(f"/Ticket/{src_id}", {"input": {
                     "status": 6,  # Clos
                 }})
                 merge_result["closed"] = True
@@ -535,7 +552,7 @@ async def merge_tickets(
 @mcp.tool()
 async def list_itil_categories() -> Any:
     """Liste toutes les catégories ITIL disponibles (Incident, Demande, Changement, Problème)."""
-    return await glpi.get("/apirest.php/ITILCategory")
+    return await glpi.get("/ITILCategory")
 
 
 # ── Suivis (ITILFollowup) ──────────────────────────────────────────────────
@@ -543,7 +560,7 @@ async def list_itil_categories() -> Any:
 @mcp.tool()
 async def list_followups(ticket_id: int) -> Any:
     """Liste tous les suivis d'un ticket."""
-    return await glpi.get(f"/apirest.php/Ticket/{ticket_id}/ITILFollowup")
+    return await glpi.get(f"/Ticket/{ticket_id}/ITILFollowup")
 
 
 @mcp.tool()
@@ -560,13 +577,13 @@ async def add_followup(ticket_id: int, content: str, is_private: bool = False) -
             "is_private": int(is_private),
         }
     }
-    return await glpi.post("/apirest.php/ITILFollowup", data)
+    return await glpi.post("/ITILFollowup", data)
 
 
 @mcp.tool()
 async def get_followup(followup_id: int) -> Any:
     """Retourne le détail d'un suivi spécifique."""
-    return await glpi.get(f"/apirest.php/ITILFollowup/{followup_id}")
+    return await glpi.get(f"/ITILFollowup/{followup_id}")
 
 
 # ── Tâches (ITILTask) ──────────────────────────────────────────────────────
@@ -574,7 +591,7 @@ async def get_followup(followup_id: int) -> Any:
 @mcp.tool()
 async def list_tasks(ticket_id: int) -> Any:
     """Liste toutes les tâches d'un ticket."""
-    return await glpi.get(f"/apirest.php/Ticket/{ticket_id}/TicketTask")
+    return await glpi.get(f"/Ticket/{ticket_id}/TicketTask")
 
 
 @mcp.tool()
@@ -602,7 +619,7 @@ async def add_task(
     if duration_seconds is not None:
         input_data["actiontime"] = duration_seconds
 
-    return await glpi.post("/apirest.php/TicketTask", {"input": input_data})
+    return await glpi.post("/TicketTask", {"input": input_data})
 
 
 @mcp.tool()
@@ -610,13 +627,13 @@ async def update_task(task_id: int, update_fields: Dict[str, Any]) -> Any:
     """
     Met à jour une tâche. Exemples : state (1/2), content, actiontime, users_id_tech
     """
-    return await glpi.put(f"/apirest.php/TicketTask/{task_id}", {"input": update_fields})
+    return await glpi.put(f"/TicketTask/{task_id}", {"input": update_fields})
 
 
 @mcp.tool()
 async def delete_task(task_id: int) -> Any:
     """Supprime une tâche."""
-    return await glpi.delete(f"/apirest.php/TicketTask/{task_id}")
+    return await glpi.delete(f"/TicketTask/{task_id}")
 
 
 # ── Solutions (ITILSolution) ───────────────────────────────────────────────
@@ -624,7 +641,7 @@ async def delete_task(task_id: int) -> Any:
 @mcp.tool()
 async def get_solution(ticket_id: int) -> Any:
     """Retourne la solution d'un ticket."""
-    return await glpi.get(f"/apirest.php/Ticket/{ticket_id}/ITILSolution")
+    return await glpi.get(f"/Ticket/{ticket_id}/ITILSolution")
 
 
 @mcp.tool()
@@ -641,7 +658,7 @@ async def add_solution(ticket_id: int, content: str, solution_type_id: Optional[
     if solution_type_id:
         input_data["solutiontypes_id"] = solution_type_id
 
-    return await glpi.post("/apirest.php/ITILSolution", {"input": input_data})
+    return await glpi.post("/ITILSolution", {"input": input_data})
 
 
 # ── Statistiques ───────────────────────────────────────────────────────────
@@ -649,7 +666,7 @@ async def add_solution(ticket_id: int, content: str, solution_type_id: Optional[
 @mcp.tool()
 async def stats_by_status() -> Dict[str, Any]:
     """Retourne le nombre de tickets ouverts par statut."""
-    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    tickets = await glpi.get("/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
         return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
@@ -664,7 +681,7 @@ async def stats_by_status() -> Dict[str, Any]:
 @mcp.tool()
 async def stats_by_type() -> Dict[str, Any]:
     """Retourne le nombre de tickets par type (Incident / Demande de service)."""
-    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    tickets = await glpi.get("/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
         return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
@@ -679,7 +696,7 @@ async def stats_by_type() -> Dict[str, Any]:
 @mcp.tool()
 async def stats_by_priority() -> Dict[str, Any]:
     """Retourne le nombre de tickets ouverts par priorité."""
-    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    tickets = await glpi.get("/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
         return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
@@ -696,12 +713,12 @@ async def stats_by_priority() -> Dict[str, Any]:
 @mcp.tool()
 async def stats_by_category() -> Dict[str, Any]:
     """Retourne le nombre de tickets par catégorie ITIL."""
-    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    tickets = await glpi.get("/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
         return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
     # Charger les catégories pour les libellés
-    categories = await glpi.get("/apirest.php/ITILCategory", params={"range": "0-9999"})
+    categories = await glpi.get("/ITILCategory", params={"range": "0-9999"})
     cat_map: Dict[int, str] = {}
     if isinstance(categories, list):
         for cat in categories:
@@ -719,12 +736,12 @@ async def stats_by_category() -> Dict[str, Any]:
 @mcp.tool()
 async def stats_by_assignee() -> Dict[str, Any]:
     """Retourne le nombre de tickets par technicien assigné."""
-    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    tickets = await glpi.get("/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
         return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
     # Charger les utilisateurs pour les noms
-    users = await glpi.get("/apirest.php/User", params={"range": "0-9999"})
+    users = await glpi.get("/User", params={"range": "0-9999"})
     user_map: Dict[int, str] = {}
     if isinstance(users, list):
         for u in users:
@@ -750,7 +767,7 @@ async def stats_by_assignee() -> Dict[str, Any]:
 @mcp.tool()
 async def stats_resolution_time() -> Dict[str, Any]:
     """Retourne le délai moyen de résolution des tickets résolus ou clos."""
-    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    tickets = await glpi.get("/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
         return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
@@ -787,7 +804,7 @@ async def stats_overdue() -> Dict[str, Any]:
     Retourne les tickets en retard (date d'échéance dépassée et non résolus).
     Utilise le champ time_to_resolve de GLPI.
     """
-    tickets = await glpi.get("/apirest.php/Ticket", params={"range": "0-9999"})
+    tickets = await glpi.get("/Ticket", params={"range": "0-9999"})
     if not isinstance(tickets, list):
         return {"error": "Impossible de récupérer les tickets", "raw": tickets}
 
@@ -827,13 +844,13 @@ async def stats_overdue() -> Dict[str, Any]:
 @mcp.tool()
 async def get_users() -> Any:
     """Liste les utilisateurs GLPI."""
-    return await glpi.get("/apirest.php/User")
+    return await glpi.get("/User")
 
 
 @mcp.tool()
 async def get_groups() -> Any:
     """Liste les groupes GLPI."""
-    return await glpi.get("/apirest.php/Group")
+    return await glpi.get("/Group")
 
 
 # ---------------------------------------------------------------------------
@@ -854,13 +871,13 @@ async def list_kb_articles(
     params: Dict[str, Any] = {
         "range": f"{range_start}-{range_start + range_limit - 1}",
     }
-    return await glpi.get("/apirest.php/KnowbaseItem", params=params)
+    return await glpi.get("/KnowbaseItem", params=params)
 
 
 @mcp.tool()
 async def get_kb_article(article_id: int) -> Any:
     """Retourne le detail complet d'un article de la base de connaissances."""
-    return await glpi.get(f"/apirest.php/KnowbaseItem/{article_id}")
+    return await glpi.get(f"/KnowbaseItem/{article_id}")
 
 
 @mcp.tool()
@@ -882,7 +899,7 @@ async def search_kb_articles(
         "criteria[1][searchtype]": "contains",
         "criteria[1][value]": keywords,
     }
-    return await glpi.get("/apirest.php/search/KnowbaseItem", params=params)
+    return await glpi.get("/search/KnowbaseItem", params=params)
 
 
 @mcp.tool()
@@ -906,7 +923,7 @@ async def create_kb_article(
     }
     if category_id:
         input_data["knowbaseitemcategories_id"] = category_id
-    return await glpi.post("/apirest.php/KnowbaseItem", {"input": input_data})
+    return await glpi.post("/KnowbaseItem", {"input": input_data})
 
 
 @mcp.tool()
@@ -915,13 +932,13 @@ async def update_kb_article(article_id: int, update_fields: Dict[str, Any]) -> A
     Met a jour un article de la base de connaissances.
     Exemples de champs : name, answer, is_faq, knowbaseitemcategories_id
     """
-    return await glpi.put(f"/apirest.php/KnowbaseItem/{article_id}", {"input": update_fields})
+    return await glpi.put(f"/KnowbaseItem/{article_id}", {"input": update_fields})
 
 
 @mcp.tool()
 async def list_kb_categories() -> Any:
     """Liste toutes les categories de la base de connaissances."""
-    return await glpi.get("/apirest.php/KnowbaseItemCategory")
+    return await glpi.get("/KnowbaseItemCategory")
 
 
 @mcp.tool()
@@ -930,10 +947,10 @@ async def get_kb_article_visibility(article_id: int) -> Dict[str, Any]:
     Retourne les regles de visibilite d'un article KB :
     profils, groupes, utilisateurs et entites ayant acces.
     """
-    profiles = await glpi.get(f"/apirest.php/KnowbaseItem/{article_id}/KnowbaseItem_Profile")
-    groups   = await glpi.get(f"/apirest.php/KnowbaseItem/{article_id}/KnowbaseItem_Group")
-    users    = await glpi.get(f"/apirest.php/KnowbaseItem/{article_id}/KnowbaseItem_User")
-    entities = await glpi.get(f"/apirest.php/KnowbaseItem/{article_id}/Entity_KnowbaseItem")
+    profiles = await glpi.get(f"/KnowbaseItem/{article_id}/KnowbaseItem_Profile")
+    groups   = await glpi.get(f"/KnowbaseItem/{article_id}/KnowbaseItem_Group")
+    users    = await glpi.get(f"/KnowbaseItem/{article_id}/KnowbaseItem_User")
+    entities = await glpi.get(f"/KnowbaseItem/{article_id}/Entity_KnowbaseItem")
     return {
         "profiles": profiles,
         "groups": groups,
@@ -955,7 +972,7 @@ async def add_kb_article_visibility_profile(
     - entities_id : 0 = entite racine
     - is_recursive : appliquer aux sous-entites
     """
-    return await glpi.post("/apirest.php/KnowbaseItem_Profile", {"input": {
+    return await glpi.post("/KnowbaseItem_Profile", {"input": {
         "knowbaseitems_id": article_id,
         "profiles_id": profiles_id,
         "entities_id": entities_id,
@@ -974,7 +991,7 @@ async def add_kb_article_visibility_group(
     Ajoute un groupe dans la visibilite d'un article KB.
     - groups_id : ID du groupe GLPI
     """
-    return await glpi.post("/apirest.php/KnowbaseItem_Group", {"input": {
+    return await glpi.post("/KnowbaseItem_Group", {"input": {
         "knowbaseitems_id": article_id,
         "groups_id": groups_id,
         "entities_id": entities_id,
@@ -992,7 +1009,7 @@ async def update_kb_article_visibility_profile(
     - visibility_id : ID de l'entree KnowbaseItem_Profile (obtenu via get_kb_article_visibility)
     - update_fields : champs a modifier, ex: {"entities_id": 1, "is_recursive": 1}
     """
-    return await glpi.put(f"/apirest.php/KnowbaseItem_Profile/{visibility_id}", {"input": update_fields})
+    return await glpi.put(f"/KnowbaseItem_Profile/{visibility_id}", {"input": update_fields})
 
 
 @mcp.tool()
@@ -1005,7 +1022,7 @@ async def update_kb_article_visibility_group(
     - visibility_id : ID de l'entree KnowbaseItem_Group (obtenu via get_kb_article_visibility)
     - update_fields : champs a modifier, ex: {"entities_id": 1, "is_recursive": 1}
     """
-    return await glpi.put(f"/apirest.php/KnowbaseItem_Group/{visibility_id}", {"input": update_fields})
+    return await glpi.put(f"/KnowbaseItem_Group/{visibility_id}", {"input": update_fields})
 if __name__ == "__main__":
     mcp.run(transport="stdio")
 
