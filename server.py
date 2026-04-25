@@ -884,11 +884,43 @@ async def list_kb_articles(
     range_start: int = 0,
     range_limit: int = 50,
 ) -> Any:
-    """Liste les articles de la base de connaissances GLPI."""
+    """List GLPI knowledge base articles with pagination.
+
+    Each KnowbaseItem returned by the API embeds the full HTML answer.
+    On large KBs this makes the JSON response heavy: in production we
+    observed that range_start > 60 combined with range_limit > 10 is
+    enough to exceed PHP-FPM memory_limit on the GLPI side and the
+    request fails. To stay below that ceiling, range_limit is
+    auto-clamped to 10 when range_start > 60. When clamping kicks in
+    the response is wrapped in a dict carrying _clamped_range_limit
+    and _warning so callers can detect the change. Behaviour is
+    unchanged for range_start <= 60.
+    """
+    clamped = range_start > 60 and range_limit > 10
+    effective_limit = 10 if clamped else range_limit
+
     params: Dict[str, Any] = {
-        "range": f"{range_start}-{range_start + range_limit - 1}",
+        "range": f"{range_start}-{range_start + effective_limit - 1}",
     }
-    return await glpi.get("/KnowbaseItem", params=params)
+    result = await glpi.get("/KnowbaseItem", params=params)
+
+    if not clamped:
+        return result
+
+    warning = (
+        "range_limit clamped to 10 because range_start > 60 "
+        "(prevents GLPI PHP memory_limit errors on large KB payloads)."
+    )
+    if isinstance(result, list):
+        return {
+            "_clamped_range_limit": 10,
+            "_warning": warning,
+            "items": result,
+        }
+    if isinstance(result, dict):
+        result["_clamped_range_limit"] = 10
+        result["_warning"] = warning
+    return result
 
 
 @mcp.tool()
