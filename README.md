@@ -262,7 +262,7 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 
 | Outil | Description |
 |-------|-------------|
-| `list_kb_articles` | Liste les articles avec pagination |
+| `list_kb_articles` | Liste les articles avec pagination. Si `range_start > 60` et `range_limit > 10`, `range_limit` est auto-clampé à 10 (les contenus HTML complets dans la réponse JSON dépassent souvent le `memory_limit` PHP-FPM côté GLPI au-delà). Quand le clamp s'applique, la réponse est un dict `{"_clamped_range_limit": 10, "_warning": "...", "items": [...]}` au lieu d'une liste. |
 | `get_kb_article` | Détail complet d'un article |
 | `search_kb_articles` | Recherche par mots-clés (titre par défaut ; passer `search_content=True` pour inclure le corps HTML — lent sans index FULLTEXT MySQL sur `knowbaseitems.answer`) |
 | `create_kb_article` | Crée un nouvel article (titre, contenu HTML, catégorie, FAQ) |
@@ -696,7 +696,7 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 
 | Tool | Description |
 |------|-------------|
-| `list_kb_articles` | List articles with pagination |
+| `list_kb_articles` | List articles with pagination. If `range_start > 60` and `range_limit > 10`, `range_limit` is auto-clamped to 10 (full HTML article bodies in the JSON response often exceed the GLPI PHP-FPM `memory_limit` beyond that). When clamping kicks in, the response is a dict `{"_clamped_range_limit": 10, "_warning": "...", "items": [...]}` instead of a list. |
 | `get_kb_article` | Full article details |
 | `search_kb_articles` | Search by keywords (title only by default ; pass `search_content=True` to also match the HTML body — slow without a MySQL FULLTEXT index on `knowbaseitems.answer`) |
 | `create_kb_article` | Create a new article (title, HTML content, category, FAQ) |
