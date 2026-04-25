@@ -151,6 +151,11 @@ logger.info("Version GLPI : %s (préfixe API : %s)", GLPI_VERSION, _API_PREFIX)
 _session_token: Optional[str] = None
 
 
+# HTTP timeout applied to every httpx.AsyncClient created in this module.
+# 30s read covers slow GLPI search queries; 10s connect catches firewall drops fast.
+_HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+
+
 async def _init_session() -> str:
     """Initialise la session GLPI et retourne le session_token."""
     global _session_token
@@ -160,7 +165,7 @@ async def _init_session() -> str:
         "Authorization": f"user_token {GLPI_USER_TOKEN}",
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(verify=False) as client:
+    async with httpx.AsyncClient(verify=False, timeout=_HTTP_TIMEOUT) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         _session_token = resp.json()["session_token"]
@@ -196,49 +201,61 @@ class GLPIClient:
         }
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """Exécute une requête HTTP avec renouvellement automatique de session sur 401."""
+        """Exécute une requête HTTP avec renouvellement automatique de session sur 401.
+
+        Returns a structured error dict on httpx timeouts so callers do
+        not have to handle raw exceptions. The 30s ceiling is enforced by
+        the AsyncClient timeout configured at module level.
+        """
         url = f"{GLPI_URL}{path}"
-        async with httpx.AsyncClient(verify=False) as client:
-            resp = await client.request(method, url, headers=await self._headers(), **kwargs)
-            if resp.status_code == 401:
-                logger.warning("Session expirée, renouvellement automatique...")
-                await _init_session()
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.request(method, url, headers=await self._headers(), **kwargs)
-
-            # --- Gestion d'erreurs structurée ---
-            try:
-                body = resp.json()
-            except Exception:
-                if resp.is_success:
-                    return {"message": "Opération réussie (réponse vide)."}
-                return {
-                    "error": f"Erreur HTTP {resp.status_code}",
-                    "detail": resp.text[:500] if resp.text else "Réponse vide",
-                }
-
-            # GLPI retourne parfois des erreurs sous forme ["ERROR_*", "message"]
-            if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
-                error_code, error_msg = body[0], body[1]
-                if error_code in ("ERROR_SESSION_TOKEN_INVALID", "ERROR_SESSION_TOKEN_MISSING"):
-                    logger.warning("Token de session invalide (%s), renouvellement...", error_code)
+                if resp.status_code == 401:
+                    logger.warning("Session expirée, renouvellement automatique...")
                     await _init_session()
                     resp = await client.request(method, url, headers=await self._headers(), **kwargs)
-                    try:
-                        body = resp.json()
-                    except Exception:
-                        if resp.is_success:
-                            return {"message": "Opération réussie (réponse vide)."}
-                        return {"error": f"Erreur HTTP {resp.status_code}", "detail": resp.text[:500]}
-                    if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
-                        return {"error": body[0], "message": body[1]}
-                else:
-                    return {"error": error_code, "message": error_msg}
 
-            # Erreurs HTTP classiques (4xx/5xx) avec body JSON
-            if not resp.is_success:
-                return {"error": f"Erreur HTTP {resp.status_code}", "detail": body}
+                # --- Gestion d'erreurs structurée ---
+                try:
+                    body = resp.json()
+                except Exception:
+                    if resp.is_success:
+                        return {"message": "Opération réussie (réponse vide)."}
+                    return {
+                        "error": f"Erreur HTTP {resp.status_code}",
+                        "detail": resp.text[:500] if resp.text else "Réponse vide",
+                    }
 
-            return body
+                # GLPI retourne parfois des erreurs sous forme ["ERROR_*", "message"]
+                if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
+                    error_code, error_msg = body[0], body[1]
+                    if error_code in ("ERROR_SESSION_TOKEN_INVALID", "ERROR_SESSION_TOKEN_MISSING"):
+                        logger.warning("Token de session invalide (%s), renouvellement...", error_code)
+                        await _init_session()
+                        resp = await client.request(method, url, headers=await self._headers(), **kwargs)
+                        try:
+                            body = resp.json()
+                        except Exception:
+                            if resp.is_success:
+                                return {"message": "Opération réussie (réponse vide)."}
+                            return {"error": f"Erreur HTTP {resp.status_code}", "detail": resp.text[:500]}
+                        if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
+                            return {"error": body[0], "message": body[1]}
+                    else:
+                        return {"error": error_code, "message": error_msg}
+
+                # Erreurs HTTP classiques (4xx/5xx) avec body JSON
+                if not resp.is_success:
+                    return {"error": f"Erreur HTTP {resp.status_code}", "detail": body}
+
+                return body
+        except httpx.TimeoutException:
+            logger.error("HTTP timeout (>30s) on %s %s", method, url)
+            return {
+                "error": "Timeout HTTP",
+                "detail": "Requête > 30s — voir GLPI logs",
+            }
 
     async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         return await self._request("GET", self._path(endpoint), params=params)

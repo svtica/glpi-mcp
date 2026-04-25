@@ -371,6 +371,7 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 
 - Vérifiez que `GLPI_URL` est accessible depuis la machine qui exécute le serveur
 - Vérifiez qu'aucun pare-feu ne bloque la connexion
+- Toutes les requêtes HTTP ont un délai maximal de **30 secondes** (10 s pour la connexion). Au-delà, l'outil retourne `{"error": "Timeout HTTP", "detail": "Requête > 30s — voir GLPI logs"}` au lieu de pendre. Si vous obtenez ce message de façon répétée, vérifiez les logs PHP-FPM/MySQL côté GLPI : la requête sous-jacente est probablement trop coûteuse (souvent une recherche full-text sans index).
 
 ### Environnement corporatif — Proxy SSL intercepteur (Zscaler, Forcepoint, etc.)
 
@@ -804,6 +805,7 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 
 - Verify that `GLPI_URL` is reachable from the machine running the server
 - Check that no firewall is blocking the connection
+- All HTTP requests have a hard ceiling of **30 seconds** (10 s for connect). Beyond that, the tool returns `{"error": "Timeout HTTP", "detail": "Requête > 30s — voir GLPI logs"}` instead of hanging. If you hit this repeatedly, inspect the PHP-FPM/MySQL logs on the GLPI side: the underlying query is likely too expensive (typically a full-text search without an index).
 
 ### Corporate environment — SSL-intercepting proxy (Zscaler, Forcepoint, etc.)
 
