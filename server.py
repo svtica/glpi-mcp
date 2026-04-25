@@ -902,20 +902,36 @@ async def search_kb_articles(
     keywords: str,
     range_start: int = 0,
     range_limit: int = 50,
+    search_content: bool = False,
 ) -> Any:
-    """Recherche des articles dans la base de connaissances par mots-cles."""
-    # Champ 6 = nom/titre, champ 7 = contenu/reponse dans KnowbaseItem
+    """Search knowledge base articles by keyword.
+
+    By default the search runs only against the title (KnowbaseItem field 6),
+    which is fast on any GLPI instance. Set search_content=True to also match
+    against the full HTML body (field 7). On a GLPI instance that has no
+    MySQL FULLTEXT index on knowbaseitems.answer, that branch produces a
+    LIKE '%keyword%' scan on the answer column which routinely exceeds the
+    30 second client timeout on KBs with sizeable HTML payloads.
+
+    Parameters:
+    - keywords: text to search for
+    - range_start, range_limit: pagination
+    - search_content: also match against the article body (default False).
+      Only enable when the GLPI database has a FULLTEXT index on
+      knowbaseitems.answer, otherwise the request will be slow.
+    """
     params: Dict[str, Any] = {
         "range": f"{range_start}-{range_start + range_limit - 1}",
-        "criteria[0][link]": "AND",
         "criteria[0][field]": "6",
         "criteria[0][searchtype]": "contains",
         "criteria[0][value]": keywords,
-        "criteria[1][link]": "OR",
-        "criteria[1][field]": "7",
-        "criteria[1][searchtype]": "contains",
-        "criteria[1][value]": keywords,
     }
+    if search_content:
+        params["criteria[0][link]"] = "AND"
+        params["criteria[1][link]"] = "OR"
+        params["criteria[1][field]"] = "7"
+        params["criteria[1][searchtype]"] = "contains"
+        params["criteria[1][value]"] = keywords
     return await glpi.get("/search/KnowbaseItem", params=params)
 
 

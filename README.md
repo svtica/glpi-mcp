@@ -264,7 +264,7 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 |-------|-------------|
 | `list_kb_articles` | Liste les articles avec pagination |
 | `get_kb_article` | Détail complet d'un article |
-| `search_kb_articles` | Recherche par mots-clés (titre et contenu) |
+| `search_kb_articles` | Recherche par mots-clés (titre par défaut ; passer `search_content=True` pour inclure le corps HTML — lent sans index FULLTEXT MySQL sur `knowbaseitems.answer`) |
 | `create_kb_article` | Crée un nouvel article (titre, contenu HTML, catégorie, FAQ) |
 | `update_kb_article` | Met à jour un article existant |
 | `list_kb_categories` | Liste les catégories de la base de connaissances |
@@ -698,7 +698,7 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 |------|-------------|
 | `list_kb_articles` | List articles with pagination |
 | `get_kb_article` | Full article details |
-| `search_kb_articles` | Search by keywords (title and content) |
+| `search_kb_articles` | Search by keywords (title only by default ; pass `search_content=True` to also match the HTML body — slow without a MySQL FULLTEXT index on `knowbaseitems.answer`) |
 | `create_kb_article` | Create a new article (title, HTML content, category, FAQ) |
 | `update_kb_article` | Update an existing article |
 | `list_kb_categories` | List knowledge base categories |
