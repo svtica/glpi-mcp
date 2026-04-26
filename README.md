@@ -262,9 +262,9 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 
 | Outil | Description |
 |-------|-------------|
-| `list_kb_articles` | Liste les articles avec pagination |
+| `list_kb_articles` | Liste les articles avec pagination. Si `range_start > 60` et `range_limit > 10`, `range_limit` est auto-clampé à 10 (les contenus HTML complets dans la réponse JSON dépassent souvent le `memory_limit` PHP-FPM côté GLPI au-delà). Quand le clamp s'applique, la réponse est un dict `{"_clamped_range_limit": 10, "_warning": "...", "items": [...]}` au lieu d'une liste. |
 | `get_kb_article` | Détail complet d'un article |
-| `search_kb_articles` | Recherche par mots-clés (titre et contenu) |
+| `search_kb_articles` | Recherche par mots-clés (titre par défaut ; passer `search_content=True` pour inclure le corps HTML — lent sans index FULLTEXT MySQL sur `knowbaseitems.answer`) |
 | `create_kb_article` | Crée un nouvel article (titre, contenu HTML, catégorie, FAQ) |
 | `update_kb_article` | Met à jour un article existant |
 | `list_kb_categories` | Liste les catégories de la base de connaissances |
@@ -371,6 +371,7 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 
 - Vérifiez que `GLPI_URL` est accessible depuis la machine qui exécute le serveur
 - Vérifiez qu'aucun pare-feu ne bloque la connexion
+- Toutes les requêtes HTTP ont un délai maximal de **30 secondes** (10 s pour la connexion). Au-delà, l'outil retourne un dict structuré avec les clés `error` et `detail` (libellés tirés de la table `LANG`) au lieu de pendre — par défaut en français : `{"error": "Timeout HTTP", "detail": "Requête > 30s — voir GLPI logs"}`. Si vous obtenez ce message de façon répétée, vérifiez les logs PHP-FPM/MySQL côté GLPI : la requête sous-jacente est probablement trop coûteuse (souvent une recherche full-text sans index).
 
 ### Environnement corporatif — Proxy SSL intercepteur (Zscaler, Forcepoint, etc.)
 
@@ -695,9 +696,9 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 
 | Tool | Description |
 |------|-------------|
-| `list_kb_articles` | List articles with pagination |
+| `list_kb_articles` | List articles with pagination. If `range_start > 60` and `range_limit > 10`, `range_limit` is auto-clamped to 10 (full HTML article bodies in the JSON response often exceed the GLPI PHP-FPM `memory_limit` beyond that). When clamping kicks in, the response is a dict `{"_clamped_range_limit": 10, "_warning": "...", "items": [...]}` instead of a list. |
 | `get_kb_article` | Full article details |
-| `search_kb_articles` | Search by keywords (title and content) |
+| `search_kb_articles` | Search by keywords (title only by default ; pass `search_content=True` to also match the HTML body — slow without a MySQL FULLTEXT index on `knowbaseitems.answer`) |
 | `create_kb_article` | Create a new article (title, HTML content, category, FAQ) |
 | `update_kb_article` | Update an existing article |
 | `list_kb_categories` | List knowledge base categories |
@@ -804,6 +805,7 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 
 - Verify that `GLPI_URL` is reachable from the machine running the server
 - Check that no firewall is blocking the connection
+- All HTTP requests have a hard ceiling of **30 seconds** (10 s for connect). Beyond that, the tool returns a structured dict with `error` and `detail` (labels taken from the `LANG` table) instead of hanging — in English: `{"error": "HTTP timeout", "detail": "Request > 30s — see GLPI logs"}`. If you hit this repeatedly, inspect the PHP-FPM/MySQL logs on the GLPI side: the underlying query is likely too expensive (typically a full-text search without an index).
 
 ### Corporate environment — SSL-intercepting proxy (Zscaler, Forcepoint, etc.)
 
