@@ -92,7 +92,7 @@ async def test_list_kb_articles_clamps_range_limit_when_offset_above_60():
 
     assert isinstance(result, dict)
     assert result["_clamped_range_limit"] == 10
-    assert "_warning" in result
+    assert result["_warning"] == server.LABEL_KB_CLAMP_WARNING
     assert "memory_limit" in result["_warning"]
     assert result["items"] == [{"id": 1}, {"id": 2}]
 
@@ -113,6 +113,21 @@ async def test_list_kb_articles_no_clamping_for_small_offset():
     assert isinstance(result, list)
 
 
+def test_localized_labels_exist_for_fr_and_en():
+    """The new strings must be defined in both language tables."""
+    for lang in ("fr", "en"):
+        bag = server._MAPPINGS[lang]
+        for key in ("HTTP_TIMEOUT_ERROR", "HTTP_TIMEOUT_DETAIL", "KB_CLAMP_WARNING"):
+            assert key in bag, f"missing {key} for lang={lang}"
+            assert isinstance(bag[key], str)
+            assert bag[key].strip(), f"empty {key} for lang={lang}"
+    # FR and EN strings should not be identical for any of the three keys
+    for key in ("HTTP_TIMEOUT_ERROR", "HTTP_TIMEOUT_DETAIL", "KB_CLAMP_WARNING"):
+        assert server._MAPPINGS["fr"][key] != server._MAPPINGS["en"][key], (
+            f"{key} should differ between fr and en"
+        )
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_request_returns_structured_error_on_httpx_timeout():
@@ -123,5 +138,6 @@ async def test_request_returns_structured_error_on_httpx_timeout():
     result = await server.glpi.get("/KnowbaseItem", params={"range": "0-9"})
 
     assert isinstance(result, dict)
-    assert result.get("error") == "Timeout HTTP"
+    assert result.get("error") == server.LABEL_HTTP_TIMEOUT_ERROR
+    assert result.get("detail") == server.LABEL_HTTP_TIMEOUT_DETAIL
     assert "30" in result.get("detail", "")
