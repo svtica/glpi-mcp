@@ -81,6 +81,12 @@ _MAPPINGS = {
         "UNKNOWN_F":        "Inconnue",
         "UNASSIGNED":       "Non assigné",
         "UNCATEGORIZED":    "Sans catégorie",
+        "HTTP_TIMEOUT_ERROR":  "Timeout HTTP",
+        "HTTP_TIMEOUT_DETAIL": "Requête > 30s — voir GLPI logs",
+        "KB_CLAMP_WARNING": (
+            "range_limit ramené à 10 car range_start > 60 "
+            "(évite les erreurs PHP memory_limit côté GLPI sur de gros payloads KB)."
+        ),
     },
     "en": {
         "TICKET_STATUS": {
@@ -117,6 +123,12 @@ _MAPPINGS = {
         "UNKNOWN_F":        "Unknown",
         "UNASSIGNED":       "Unassigned",
         "UNCATEGORIZED":    "Uncategorized",
+        "HTTP_TIMEOUT_ERROR":  "HTTP timeout",
+        "HTTP_TIMEOUT_DETAIL": "Request > 30s — see GLPI logs",
+        "KB_CLAMP_WARNING": (
+            "range_limit clamped to 10 because range_start > 60 "
+            "(prevents PHP memory_limit errors on large KB payloads from GLPI)."
+        ),
     },
 }
 
@@ -132,6 +144,9 @@ LABEL_UNKNOWN   = _lang_data["UNKNOWN"]
 LABEL_UNKNOWN_F = _lang_data["UNKNOWN_F"]
 LABEL_UNASSIGNED = _lang_data["UNASSIGNED"]
 LABEL_UNCATEGORIZED = _lang_data["UNCATEGORIZED"]
+LABEL_HTTP_TIMEOUT_ERROR  = _lang_data["HTTP_TIMEOUT_ERROR"]
+LABEL_HTTP_TIMEOUT_DETAIL = _lang_data["HTTP_TIMEOUT_DETAIL"]
+LABEL_KB_CLAMP_WARNING    = _lang_data["KB_CLAMP_WARNING"]
 
 logger.info("Langue des libellés : %s", LANG)
 
@@ -151,6 +166,11 @@ logger.info("Version GLPI : %s (préfixe API : %s)", GLPI_VERSION, _API_PREFIX)
 _session_token: Optional[str] = None
 
 
+# HTTP timeout applied to every httpx.AsyncClient created in this module.
+# 30s read covers slow GLPI search queries; 10s connect catches firewall drops fast.
+_HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+
+
 async def _init_session() -> str:
     """Initialise la session GLPI et retourne le session_token."""
     global _session_token
@@ -160,7 +180,7 @@ async def _init_session() -> str:
         "Authorization": f"user_token {GLPI_USER_TOKEN}",
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(verify=False) as client:
+    async with httpx.AsyncClient(verify=False, timeout=_HTTP_TIMEOUT) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         _session_token = resp.json()["session_token"]
@@ -196,49 +216,61 @@ class GLPIClient:
         }
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """Exécute une requête HTTP avec renouvellement automatique de session sur 401."""
+        """Exécute une requête HTTP avec renouvellement automatique de session sur 401.
+
+        Returns a structured error dict on httpx timeouts so callers do
+        not have to handle raw exceptions. The 30s ceiling is enforced by
+        the AsyncClient timeout configured at module level.
+        """
         url = f"{GLPI_URL}{path}"
-        async with httpx.AsyncClient(verify=False) as client:
-            resp = await client.request(method, url, headers=await self._headers(), **kwargs)
-            if resp.status_code == 401:
-                logger.warning("Session expirée, renouvellement automatique...")
-                await _init_session()
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.request(method, url, headers=await self._headers(), **kwargs)
-
-            # --- Gestion d'erreurs structurée ---
-            try:
-                body = resp.json()
-            except Exception:
-                if resp.is_success:
-                    return {"message": "Opération réussie (réponse vide)."}
-                return {
-                    "error": f"Erreur HTTP {resp.status_code}",
-                    "detail": resp.text[:500] if resp.text else "Réponse vide",
-                }
-
-            # GLPI retourne parfois des erreurs sous forme ["ERROR_*", "message"]
-            if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
-                error_code, error_msg = body[0], body[1]
-                if error_code in ("ERROR_SESSION_TOKEN_INVALID", "ERROR_SESSION_TOKEN_MISSING"):
-                    logger.warning("Token de session invalide (%s), renouvellement...", error_code)
+                if resp.status_code == 401:
+                    logger.warning("Session expirée, renouvellement automatique...")
                     await _init_session()
                     resp = await client.request(method, url, headers=await self._headers(), **kwargs)
-                    try:
-                        body = resp.json()
-                    except Exception:
-                        if resp.is_success:
-                            return {"message": "Opération réussie (réponse vide)."}
-                        return {"error": f"Erreur HTTP {resp.status_code}", "detail": resp.text[:500]}
-                    if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
-                        return {"error": body[0], "message": body[1]}
-                else:
-                    return {"error": error_code, "message": error_msg}
 
-            # Erreurs HTTP classiques (4xx/5xx) avec body JSON
-            if not resp.is_success:
-                return {"error": f"Erreur HTTP {resp.status_code}", "detail": body}
+                # --- Gestion d'erreurs structurée ---
+                try:
+                    body = resp.json()
+                except Exception:
+                    if resp.is_success:
+                        return {"message": "Opération réussie (réponse vide)."}
+                    return {
+                        "error": f"Erreur HTTP {resp.status_code}",
+                        "detail": resp.text[:500] if resp.text else "Réponse vide",
+                    }
 
-            return body
+                # GLPI retourne parfois des erreurs sous forme ["ERROR_*", "message"]
+                if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
+                    error_code, error_msg = body[0], body[1]
+                    if error_code in ("ERROR_SESSION_TOKEN_INVALID", "ERROR_SESSION_TOKEN_MISSING"):
+                        logger.warning("Token de session invalide (%s), renouvellement...", error_code)
+                        await _init_session()
+                        resp = await client.request(method, url, headers=await self._headers(), **kwargs)
+                        try:
+                            body = resp.json()
+                        except Exception:
+                            if resp.is_success:
+                                return {"message": "Opération réussie (réponse vide)."}
+                            return {"error": f"Erreur HTTP {resp.status_code}", "detail": resp.text[:500]}
+                        if isinstance(body, list) and len(body) == 2 and isinstance(body[0], str) and body[0].startswith("ERROR"):
+                            return {"error": body[0], "message": body[1]}
+                    else:
+                        return {"error": error_code, "message": error_msg}
+
+                # Erreurs HTTP classiques (4xx/5xx) avec body JSON
+                if not resp.is_success:
+                    return {"error": f"Erreur HTTP {resp.status_code}", "detail": body}
+
+                return body
+        except httpx.TimeoutException:
+            logger.error("HTTP timeout (>30s) on %s %s", method, url)
+            return {
+                "error": LABEL_HTTP_TIMEOUT_ERROR,
+                "detail": LABEL_HTTP_TIMEOUT_DETAIL,
+            }
 
     async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         return await self._request("GET", self._path(endpoint), params=params)
@@ -867,11 +899,39 @@ async def list_kb_articles(
     range_start: int = 0,
     range_limit: int = 50,
 ) -> Any:
-    """Liste les articles de la base de connaissances GLPI."""
+    """List GLPI knowledge base articles with pagination.
+
+    Each KnowbaseItem returned by the API embeds the full HTML answer.
+    On large KBs this makes the JSON response heavy: in production we
+    observed that range_start > 60 combined with range_limit > 10 is
+    enough to exceed PHP-FPM memory_limit on the GLPI side and the
+    request fails. To stay below that ceiling, range_limit is
+    auto-clamped to 10 when range_start > 60. When clamping kicks in
+    the response is wrapped in a dict carrying _clamped_range_limit
+    and _warning so callers can detect the change. Behaviour is
+    unchanged for range_start <= 60.
+    """
+    clamped = range_start > 60 and range_limit > 10
+    effective_limit = 10 if clamped else range_limit
+
     params: Dict[str, Any] = {
-        "range": f"{range_start}-{range_start + range_limit - 1}",
+        "range": f"{range_start}-{range_start + effective_limit - 1}",
     }
-    return await glpi.get("/KnowbaseItem", params=params)
+    result = await glpi.get("/KnowbaseItem", params=params)
+
+    if not clamped:
+        return result
+
+    if isinstance(result, list):
+        return {
+            "_clamped_range_limit": 10,
+            "_warning": LABEL_KB_CLAMP_WARNING,
+            "items": result,
+        }
+    if isinstance(result, dict):
+        result["_clamped_range_limit"] = 10
+        result["_warning"] = LABEL_KB_CLAMP_WARNING
+    return result
 
 
 @mcp.tool()
@@ -885,20 +945,36 @@ async def search_kb_articles(
     keywords: str,
     range_start: int = 0,
     range_limit: int = 50,
+    search_content: bool = False,
 ) -> Any:
-    """Recherche des articles dans la base de connaissances par mots-cles."""
-    # Champ 6 = nom/titre, champ 7 = contenu/reponse dans KnowbaseItem
+    """Search knowledge base articles by keyword.
+
+    By default the search runs only against the title (KnowbaseItem field 6),
+    which is fast on any GLPI instance. Set search_content=True to also match
+    against the full HTML body (field 7). On a GLPI instance that has no
+    MySQL FULLTEXT index on knowbaseitems.answer, that branch produces a
+    LIKE '%keyword%' scan on the answer column which routinely exceeds the
+    30 second client timeout on KBs with sizeable HTML payloads.
+
+    Parameters:
+    - keywords: text to search for
+    - range_start, range_limit: pagination
+    - search_content: also match against the article body (default False).
+      Only enable when the GLPI database has a FULLTEXT index on
+      knowbaseitems.answer, otherwise the request will be slow.
+    """
     params: Dict[str, Any] = {
         "range": f"{range_start}-{range_start + range_limit - 1}",
-        "criteria[0][link]": "AND",
         "criteria[0][field]": "6",
         "criteria[0][searchtype]": "contains",
         "criteria[0][value]": keywords,
-        "criteria[1][link]": "OR",
-        "criteria[1][field]": "7",
-        "criteria[1][searchtype]": "contains",
-        "criteria[1][value]": keywords,
     }
+    if search_content:
+        params["criteria[0][link]"] = "AND"
+        params["criteria[1][link]"] = "OR"
+        params["criteria[1][field]"] = "7"
+        params["criteria[1][searchtype]"] = "contains"
+        params["criteria[1][value]"] = keywords
     return await glpi.get("/search/KnowbaseItem", params=params)
 
 
