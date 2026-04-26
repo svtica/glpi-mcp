@@ -81,6 +81,12 @@ _MAPPINGS = {
         "UNKNOWN_F":        "Inconnue",
         "UNASSIGNED":       "Non assigné",
         "UNCATEGORIZED":    "Sans catégorie",
+        "HTTP_TIMEOUT_ERROR":  "Timeout HTTP",
+        "HTTP_TIMEOUT_DETAIL": "Requête > 30s — voir GLPI logs",
+        "KB_CLAMP_WARNING": (
+            "range_limit ramené à 10 car range_start > 60 "
+            "(évite les erreurs PHP memory_limit côté GLPI sur de gros payloads KB)."
+        ),
     },
     "en": {
         "TICKET_STATUS": {
@@ -117,6 +123,12 @@ _MAPPINGS = {
         "UNKNOWN_F":        "Unknown",
         "UNASSIGNED":       "Unassigned",
         "UNCATEGORIZED":    "Uncategorized",
+        "HTTP_TIMEOUT_ERROR":  "HTTP timeout",
+        "HTTP_TIMEOUT_DETAIL": "Request > 30s — see GLPI logs",
+        "KB_CLAMP_WARNING": (
+            "range_limit clamped to 10 because range_start > 60 "
+            "(prevents PHP memory_limit errors on large KB payloads from GLPI)."
+        ),
     },
 }
 
@@ -132,6 +144,9 @@ LABEL_UNKNOWN   = _lang_data["UNKNOWN"]
 LABEL_UNKNOWN_F = _lang_data["UNKNOWN_F"]
 LABEL_UNASSIGNED = _lang_data["UNASSIGNED"]
 LABEL_UNCATEGORIZED = _lang_data["UNCATEGORIZED"]
+LABEL_HTTP_TIMEOUT_ERROR  = _lang_data["HTTP_TIMEOUT_ERROR"]
+LABEL_HTTP_TIMEOUT_DETAIL = _lang_data["HTTP_TIMEOUT_DETAIL"]
+LABEL_KB_CLAMP_WARNING    = _lang_data["KB_CLAMP_WARNING"]
 
 logger.info("Langue des libellés : %s", LANG)
 
@@ -253,8 +268,8 @@ class GLPIClient:
         except httpx.TimeoutException:
             logger.error("HTTP timeout (>30s) on %s %s", method, url)
             return {
-                "error": "Timeout HTTP",
-                "detail": "Requête > 30s — voir GLPI logs",
+                "error": LABEL_HTTP_TIMEOUT_ERROR,
+                "detail": LABEL_HTTP_TIMEOUT_DETAIL,
             }
 
     async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
@@ -907,19 +922,15 @@ async def list_kb_articles(
     if not clamped:
         return result
 
-    warning = (
-        "range_limit clamped to 10 because range_start > 60 "
-        "(prevents GLPI PHP memory_limit errors on large KB payloads)."
-    )
     if isinstance(result, list):
         return {
             "_clamped_range_limit": 10,
-            "_warning": warning,
+            "_warning": LABEL_KB_CLAMP_WARNING,
             "items": result,
         }
     if isinstance(result, dict):
         result["_clamped_range_limit"] = 10
-        result["_warning"] = warning
+        result["_warning"] = LABEL_KB_CLAMP_WARNING
     return result
 
 
