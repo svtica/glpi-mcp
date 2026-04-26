@@ -36,14 +36,44 @@ def _stub_session():
     server._session_token = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_search_options_cache():
+    """Each test starts with a clean discovery cache."""
+    server._search_options_cache.clear()
+    yield
+    server._search_options_cache.clear()
+
+
 def _params_of(call) -> dict:
     """Return the multi-dict of query params from a captured respx call."""
     return dict(httpx.URL(str(call.request.url)).params.multi_items())
 
 
+def _stub_listSearchOptions(itemtype: str, mapping: dict) -> None:
+    """Mock listSearchOptions for an itemtype with the given column→ID mapping.
+
+    Returned shape mimics GLPI's REST response: numeric keys with a meta
+    dict that carries at least the {"field": <column>} attribute.
+    """
+    payload = {"common": {"name": "Common"}}
+    for column, field_id in mapping.items():
+        payload[str(field_id)] = {"table": f"glpi_{itemtype.lower()}s", "field": column, "name": column.title()}
+    respx.get(
+        f"{server.GLPI_URL}{server._API_PREFIX}/listSearchOptions/{itemtype}"
+    ).mock(return_value=httpx.Response(200, json=payload))
+
+
+def _stub_listSearchOptions_unavailable(itemtype: str) -> None:
+    """Mock listSearchOptions returning a GLPI-style error payload."""
+    respx.get(
+        f"{server.GLPI_URL}{server._API_PREFIX}/listSearchOptions/{itemtype}"
+    ).mock(return_value=httpx.Response(404, json=["ERROR_ENDPOINT_NOT_FOUND", "endpoint missing"]))
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_search_kb_articles_default_skips_content_field():
+    _stub_listSearchOptions("KnowbaseItem", {"name": "6", "answer": "7"})
     route = respx.get(
         f"{server.GLPI_URL}{server._API_PREFIX}/search/KnowbaseItem"
     ).mock(return_value=httpx.Response(200, json={"data": [], "totalcount": 0}))
@@ -62,6 +92,7 @@ async def test_search_kb_articles_default_skips_content_field():
 @pytest.mark.asyncio
 @respx.mock
 async def test_search_kb_articles_with_search_content_includes_body_field():
+    _stub_listSearchOptions("KnowbaseItem", {"name": "6", "answer": "7"})
     route = respx.get(
         f"{server.GLPI_URL}{server._API_PREFIX}/search/KnowbaseItem"
     ).mock(return_value=httpx.Response(200, json={"data": [], "totalcount": 0}))
@@ -74,6 +105,40 @@ async def test_search_kb_articles_with_search_content_includes_body_field():
     assert params.get("criteria[1][field]") == "7"
     assert params.get("criteria[1][value]") == "vpn"
     assert params.get("criteria[1][searchtype]") == "contains"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_search_kb_articles_uses_discovered_field_ids_when_not_six_and_seven():
+    # GLPI 11 (or any non-default schema) returns different numeric IDs.
+    _stub_listSearchOptions("KnowbaseItem", {"name": "12", "answer": "21"})
+    route = respx.get(
+        f"{server.GLPI_URL}{server._API_PREFIX}/search/KnowbaseItem"
+    ).mock(return_value=httpx.Response(200, json={"data": [], "totalcount": 0}))
+
+    await server.search_kb_articles(keywords="vpn", search_content=True)
+
+    assert route.called
+    params = _params_of(respx.calls.last)
+    assert params.get("criteria[0][field]") == "12"
+    assert params.get("criteria[1][field]") == "21"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_search_kb_articles_falls_back_to_legacy_ids_when_discovery_unavailable():
+    _stub_listSearchOptions_unavailable("KnowbaseItem")
+    route = respx.get(
+        f"{server.GLPI_URL}{server._API_PREFIX}/search/KnowbaseItem"
+    ).mock(return_value=httpx.Response(200, json={"data": [], "totalcount": 0}))
+
+    await server.search_kb_articles(keywords="vpn", search_content=True)
+
+    assert route.called
+    params = _params_of(respx.calls.last)
+    # Discovery returned an error payload — defaults must apply.
+    assert params.get("criteria[0][field]") == "6"
+    assert params.get("criteria[1][field]") == "7"
 
 
 @pytest.mark.asyncio
