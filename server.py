@@ -312,6 +312,85 @@ mcp = FastMCP(
 glpi = GLPIClient()
 
 
+# ---------------------------------------------------------------------------
+# Search-option discovery (per itemtype)
+# ---------------------------------------------------------------------------
+# GLPI search criteria use numeric field IDs whose meaning depends on the
+# itemtype AND the GLPI version. KnowbaseItem field 6 is the title in
+# GLPI 10 but the same numeric ID can resolve to a different column on
+# GLPI 11, which surfaces as
+#     ["ERROR", "Identifiant de champ incorrect dans le critère de recherche"].
+# To stay version-agnostic we discover the IDs at runtime via
+# listSearchOptions/{itemtype} and look them up by their stable column name
+# (the meta["field"] attribute, which is locale-independent unlike
+# meta["name"]). The result is cached for the lifetime of the process.
+_search_options_cache: Dict[str, Dict[str, str]] = {}
+
+
+async def _discover_search_options(itemtype: str) -> Dict[str, str]:
+    """Return a dict mapping column name -> numeric search-option ID.
+
+    Falls back to an empty dict on any error (network, schema mismatch,
+    endpoint absent). Callers must always pass an explicit default to
+    `_resolve_search_field_id` so the legacy GLPI 10 numbering keeps
+    working when discovery is unavailable.
+    """
+    if itemtype in _search_options_cache:
+        return _search_options_cache[itemtype]
+
+    try:
+        result = await glpi.get(f"/listSearchOptions/{itemtype}")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("listSearchOptions/%s a échoué : %s", itemtype, exc)
+        _search_options_cache[itemtype] = {}
+        return {}
+
+    if not isinstance(result, dict):
+        logger.warning(
+            "listSearchOptions/%s n'a pas retourné un dict (%s) ; fallback aux IDs par défaut.",
+            itemtype,
+            type(result).__name__,
+        )
+        _search_options_cache[itemtype] = {}
+        return {}
+
+    # GLPI returns an error payload as {"error": ..., "detail": ...} when
+    # the endpoint is not reachable on the active API prefix; treat that
+    # as "discovery failed" and fall back silently.
+    if "error" in result and "detail" in result:
+        logger.info(
+            "Discovery search options indisponible pour %s (%s); fallback aux IDs par défaut.",
+            itemtype,
+            result.get("error"),
+        )
+        _search_options_cache[itemtype] = {}
+        return {}
+
+    mapping: Dict[str, str] = {}
+    for field_id, meta in result.items():
+        if not str(field_id).isdigit():
+            continue
+        if not isinstance(meta, dict):
+            continue
+        column = (meta.get("field") or "").strip().lower()
+        if column:
+            mapping.setdefault(column, str(field_id))
+    _search_options_cache[itemtype] = mapping
+    logger.info("Découverte de %d options de recherche pour %s.", len(mapping), itemtype)
+    return mapping
+
+
+async def _resolve_search_field_id(itemtype: str, column: str, default: str) -> str:
+    """Resolve a numeric search-option ID by column name, with a fallback.
+
+    The default is the legacy GLPI 10 ID; it keeps the tool working when
+    listSearchOptions is unavailable (older instance, restricted profile,
+    different API prefix).
+    """
+    mapping = await _discover_search_options(itemtype)
+    return mapping.get(column.lower(), default)
+
+
 # ── Session ────────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -949,12 +1028,18 @@ async def search_kb_articles(
 ) -> Any:
     """Search knowledge base articles by keyword.
 
-    By default the search runs only against the title (KnowbaseItem field 6),
-    which is fast on any GLPI instance. Set search_content=True to also match
-    against the full HTML body (field 7). On a GLPI instance that has no
-    MySQL FULLTEXT index on knowbaseitems.answer, that branch produces a
-    LIKE '%keyword%' scan on the answer column which routinely exceeds the
-    30 second client timeout on KBs with sizeable HTML payloads.
+    By default the search runs only against the title column, which is fast
+    on any GLPI instance. Set search_content=True to also match against the
+    full HTML body. On a GLPI instance that has no MySQL FULLTEXT index on
+    knowbaseitems.answer, that branch produces a LIKE '%keyword%' scan on
+    the answer column which routinely exceeds the 30 second client timeout
+    on KBs with sizeable HTML payloads.
+
+    Field IDs are discovered at runtime via listSearchOptions/KnowbaseItem
+    and looked up by column name ("name", "answer") so the tool works on
+    both GLPI 10 and GLPI 11 (where numeric IDs may differ). When discovery
+    fails the legacy GLPI 10 IDs (6 for title, 7 for body) are used as a
+    fallback.
 
     Parameters:
     - keywords: text to search for
@@ -963,16 +1048,19 @@ async def search_kb_articles(
       Only enable when the GLPI database has a FULLTEXT index on
       knowbaseitems.answer, otherwise the request will be slow.
     """
+    name_field = await _resolve_search_field_id("KnowbaseItem", "name", "6")
+    answer_field = await _resolve_search_field_id("KnowbaseItem", "answer", "7")
+
     params: Dict[str, Any] = {
         "range": f"{range_start}-{range_start + range_limit - 1}",
-        "criteria[0][field]": "6",
+        "criteria[0][field]": name_field,
         "criteria[0][searchtype]": "contains",
         "criteria[0][value]": keywords,
     }
     if search_content:
         params["criteria[0][link]"] = "AND"
         params["criteria[1][link]"] = "OR"
-        params["criteria[1][field]"] = "7"
+        params["criteria[1][field]"] = answer_field
         params["criteria[1][searchtype]"] = "contains"
         params["criteria[1][value]"] = keywords
     return await glpi.get("/search/KnowbaseItem", params=params)
