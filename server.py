@@ -32,6 +32,13 @@ def _load_config() -> Dict[str, str]:
             decoded["LANG"] = raw["LANG"]
         if "GLPI_VERSION" in raw:
             decoded["GLPI_VERSION"] = raw["GLPI_VERSION"]
+        # VERIFY_TLS is plain bool. Default False for intranet deployments
+        # using a self-signed certificate or a private CA chain not trusted
+        # by the Python certifi bundle. Flip to True once the local CA is
+        # distributed to the certifi bundle.
+        # Accepts true/false bool and "true"/"false"/"0"/"1" strings.
+        if "VERIFY_TLS" in raw:
+            decoded["VERIFY_TLS"] = raw["VERIFY_TLS"]
         logger.info("Configuration chargée depuis config.json")
         return decoded
     logger.info("config.json absent, utilisation des variables d'environnement")
@@ -43,6 +50,30 @@ GLPI_APP_TOKEN  = _config.get("GLPI_APP_TOKEN",  os.environ.get("GLPI_APP_TOKEN"
 GLPI_USER_TOKEN = _config.get("GLPI_USER_TOKEN", os.environ.get("GLPI_USER_TOKEN", ""))
 LANG            = _config.get("LANG",            os.environ.get("GLPI_LANG", "fr")).lower()
 GLPI_VERSION    = _config.get("GLPI_VERSION",    os.environ.get("GLPI_VERSION", "10"))
+
+
+def _parse_verify_tls(raw: Any) -> bool:
+    """Coerce a verify-TLS config value to bool.
+
+    Default is False for glpi-mcp (intranet GLPI deployments often use a
+    self-signed cert / a private CA chain not trusted by the Python certifi
+    bundle). This preserves the historical behaviour of the MCP, which used
+    ``verify=False`` hardcoded. Set ``VERIFY_TLS=true`` once the local CA is
+    distributed to the certifi bundle.
+    """
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() not in ("false", "0", "no", "off", "")
+    return False
+
+
+VERIFY_TLS = _parse_verify_tls(
+    _config.get("VERIFY_TLS", os.environ.get("GLPI_VERIFY_TLS"))
+)
+logger.info("Validation TLS httpx (verify): %s", VERIFY_TLS)
 
 # ---------------------------------------------------------------------------
 # Mappings GLPI — libellés lisibles (fr / en)
@@ -182,7 +213,10 @@ async def _init_session() -> str:
         "Authorization": f"user_token {GLPI_USER_TOKEN}",
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(verify=False, timeout=_HTTP_TIMEOUT) as client:
+    # verify=VERIFY_TLS : configurable via la clé VERIFY_TLS dans config.json
+    # (ou la variable d'env GLPI_VERIFY_TLS). Défaut False pour les déploiements
+    # intranet — cert auto-signé / CA privée non-trustée par certifi Python.
+    async with httpx.AsyncClient(verify=VERIFY_TLS, timeout=_HTTP_TIMEOUT) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         _session_token = resp.json()["session_token"]
@@ -226,7 +260,7 @@ class GLPIClient:
         """
         url = f"{GLPI_URL}{path}"
         try:
-            async with httpx.AsyncClient(verify=False, timeout=_HTTP_TIMEOUT) as client:
+            async with httpx.AsyncClient(verify=VERIFY_TLS, timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.request(method, url, headers=await self._headers(), **kwargs)
                 if resp.status_code == 401:
                     logger.warning("Session expirée, renouvellement automatique...")
