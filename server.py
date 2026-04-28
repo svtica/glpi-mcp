@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 def _load_config() -> Dict[str, str]:
     config_path = Path(__file__).parent / "config.json"
     if config_path.exists():
-        with open(config_path, "r", encoding="utf-8") as f:
+        # utf-8-sig tolère le BOM UTF-8 que PowerShell 5.1 ajoute avec
+        # Set-Content -Encoding UTF8. Sans ce sig, json.load() plante.
+        with open(config_path, "r", encoding="utf-8-sig") as f:
             raw = json.load(f)
         decoded = {}
         for key in ("GLPI_URL", "GLPI_APP_TOKEN", "GLPI_USER_TOKEN"):
