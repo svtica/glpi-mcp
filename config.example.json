@@ -5,5 +5,7 @@
     "GLPI_APP_TOKEN": "",
     "GLPI_USER_TOKEN": "",
     "LANG": "fr",
-    "GLPI_VERSION": "10"
+    "GLPI_VERSION": "10",
+    "_comment_VERIFY_TLS": "Optional. Set false for intranet deployments using a self-signed certificate or a private CA chain not trusted by the Python certifi bundle. Common case for on-prem GLPI behind an internal CA. Plain bool, not base64.",
+    "VERIFY_TLS": false
 }
