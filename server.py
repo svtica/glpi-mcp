@@ -409,8 +409,14 @@ async def _discover_search_options(itemtype: str) -> Dict[str, str]:
         if not isinstance(meta, dict):
             continue
         column = (meta.get("field") or "").strip().lower()
+        table = (meta.get("table") or "").strip().lower()
         if column:
             mapping.setdefault(column, str(field_id))
+            # Clé qualifiée : plusieurs options partagent le même nom de
+            # colonne (« content » existe pour le ticket ET pour ses suivis).
+            # La clé table.colonne permet de viser sans ambiguïté.
+            if table:
+                mapping.setdefault(f"{table}.{column}", str(field_id))
     _search_options_cache[itemtype] = mapping
     logger.info("Découverte de %d options de recherche pour %s.", len(mapping), itemtype)
     return mapping
@@ -479,6 +485,8 @@ async def get_ticket(ticket_id: int) -> Dict[str, Any]:
 @mcp.tool()
 async def search_tickets(
     keywords: Optional[str] = None,
+    content_keywords: Optional[str] = None,
+    followup_keywords: Optional[str] = None,
     status: Optional[int] = None,
     ticket_type: Optional[int] = None,
     category_id: Optional[int] = None,
@@ -488,7 +496,24 @@ async def search_tickets(
 ) -> Any:
     """
     Recherche avancée de tickets via l'API GLPI /search/Ticket.
-    Tous les paramètres sont optionnels et combinables.
+    Tous les paramètres sont optionnels et combinables (combinés en ET).
+
+    Trois portées de recherche textuelle, à ne pas confondre :
+
+    - `keywords` : le **titre** seulement. Rapide, mais aveugle au corps du
+      ticket et aux suivis. C'est la portée historique de cet outil.
+    - `content_keywords` : la **description** du ticket (corps initial).
+    - `followup_keywords` : le contenu des **suivis**. Indispensable pour
+      l'analyse historique, car à STTR l'essentiel de la connaissance
+      d'investigation vit dans les suivis, pas dans les titres. Exemple
+      concret : « Emsisoft » ou « RogueKiller » ne retournent rien par
+      titre alors que plusieurs tickets les documentent en suivi.
+
+    Note de performance : `content_keywords` et `followup_keywords`
+    produisent un LIKE '%motif%' côté MySQL. Sans index FULLTEXT, ces
+    recherches sont sensiblement plus lentes que par titre — les combiner
+    avec `status`, `category_id` ou `ticket_type` pour réduire l'ensemble
+    balayé.
     """
     criteria = []
     idx = 0
@@ -499,6 +524,26 @@ async def search_tickets(
              f"criteria[{idx}][searchtype]": "contains",
              f"criteria[{idx}][value]": keywords},
         ]
+        idx += 1
+
+    if content_keywords:
+        field_id = await _resolve_search_field_id("Ticket", "glpi_tickets.content", "21")
+        criteria.append({
+            f"criteria[{idx}][field]": field_id,
+            f"criteria[{idx}][searchtype]": "contains",
+            f"criteria[{idx}][value]": content_keywords,
+        })
+        idx += 1
+
+    if followup_keywords:
+        field_id = await _resolve_search_field_id(
+            "Ticket", "glpi_itilfollowups.content", "25"
+        )
+        criteria.append({
+            f"criteria[{idx}][field]": field_id,
+            f"criteria[{idx}][searchtype]": "contains",
+            f"criteria[{idx}][value]": followup_keywords,
+        })
         idx += 1
 
     if status is not None:
@@ -533,11 +578,15 @@ async def search_tickets(
         })
         idx += 1
 
-    # Aplatir la liste de dicts en un seul dict de params
+    # Aplatir la liste de dicts en un seul dict de params.
+    # GLPI attend un opérateur de liaison explicite à partir du 2e critère ;
+    # sans lui, le comportement dépend de la version et peut surprendre.
     params: Dict[str, Any] = {
         "range": f"{range_start}-{range_start + range_limit - 1}",
     }
-    for c in criteria:
+    for i, c in enumerate(criteria):
+        if i > 0:
+            params[f"criteria[{i}][link]"] = "AND"
         params.update(c)
 
     return await glpi.get("/search/Ticket", params=params)
