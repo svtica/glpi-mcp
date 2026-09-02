@@ -229,6 +229,8 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | `list_followups` | Liste tous les suivis d'un ticket |
 | `get_followup` | Détail d'un suivi |
 | `add_followup` | Ajoute un suivi (public ou privé) |
+| `update_followup` | Modifie un suivi existant (contenu, visibilité) |
+| `delete_followup` | Supprime un suivi — destructif, retire la pièce de la piste d'audit |
 
 ### ✅ Tâches
 
@@ -663,6 +665,8 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 | `list_followups` | List all followups for a ticket |
 | `get_followup` | Followup details |
 | `add_followup` | Add a followup (public or private) |
+| `update_followup` | Update an existing followup (content, visibility) |
+| `delete_followup` | Delete a followup — destructive, removes it from the audit trail |
 
 ### ✅ Tasks
 

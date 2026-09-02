@@ -782,6 +782,38 @@ async def get_followup(followup_id: int) -> Any:
     return await glpi.get(f"/ITILFollowup/{followup_id}")
 
 
+@mcp.tool()
+async def update_followup(followup_id: int, update_fields: Dict[str, Any]) -> Any:
+    """
+    Met à jour un suivi existant.
+    Exemples de champs : content, is_private.
+
+    Le champ `content` doit être en HTML compatible GLPI, jamais en Markdown
+    (cf. instructions du serveur).
+
+    Note : un suivi est une pièce horodatée et signée du dossier. Corriger le
+    contenu d'un suivi déjà publié réécrit l'historique visible par l'équipe —
+    à réserver aux corrections d'erreurs factuelles récentes. Pour un
+    changement de fond, préférer l'ajout d'un nouveau suivi via `add_followup`,
+    qui conserve la trace du raisonnement antérieur.
+    """
+    return await glpi.put(f"/ITILFollowup/{followup_id}", {"input": update_fields})
+
+
+@mcp.tool()
+async def delete_followup(followup_id: int) -> Any:
+    """
+    Supprime un suivi.
+
+    ATTENTION : opération destructive et non réversible depuis cet outil — le
+    suivi disparaît de la piste d'audit du ticket. Ne l'utiliser que sur un
+    suivi publié par erreur (mauvais ticket, doublon). Pour corriger un
+    contenu, utiliser `update_followup` ; pour nuancer une conclusion,
+    `add_followup`.
+    """
+    return await glpi.delete(f"/ITILFollowup/{followup_id}")
+
+
 # ── Tâches (ITILTask) ──────────────────────────────────────────────────────
 
 @mcp.tool()
