@@ -317,8 +317,14 @@ class GLPIClient:
     async def put(self, endpoint: str, data: Dict[str, Any]) -> Any:
         return await self._request("PUT", self._path(endpoint), json=data)
 
-    async def delete(self, endpoint: str) -> Any:
-        return await self._request("DELETE", self._path(endpoint))
+    async def delete(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        """DELETE an item.
+
+        Without params, GLPI moves the item to the trash (is_deleted = 1) for
+        itemtypes that support it. Pass params={"force_purge": "true"} to
+        purge it irreversibly.
+        """
+        return await self._request("DELETE", self._path(endpoint), params=params)
 
 
 def _enrich_ticket(ticket: Dict[str, Any]) -> Dict[str, Any]:
@@ -343,6 +349,57 @@ mcp = FastMCP(
         "<ul>/<li> for bullet lists, <ol>/<li> for numbered lists, <h1>-<h3> for headings, "
         "<code> for inline code, <pre> for code blocks, <br> for line breaks. "
         "Do NOT use #, **, *, ``` or any other Markdown syntax in content fields."
+        "\n\n"
+        "SUPPLIER / CONTACT / CONTRACT REGISTRY -- these tools write to the "
+        "organisation's reference data, which other records point at. Read this "
+        "before using them.\n"
+        "\n"
+        "1. Check before creating. Always call list_suppliers first and look for an "
+        "existing entry (try a short name_contains, and only_active=False so that "
+        "deactivated entries show up too). Duplicate suppliers are the main way this "
+        "registry degrades, and merging them afterwards is manual work in the GLPI "
+        "web interface. The same caution applies before creating a contact or a "
+        "contract for a supplier that may already have one.\n"
+        "\n"
+        "2. Deactivate, do not delete. A supplier that no longer does business with "
+        "the organisation should be deactivated with "
+        "update_supplier(id, {'is_active': 0}), NOT deleted. Deactivating keeps its "
+        "contracts, assets and ticket history readable. Deletion is for duplicates "
+        "and data-entry mistakes only.\n"
+        "\n"
+        "3. Deletion has two very different modes. delete_supplier / delete_contact / "
+        "delete_contract default to purge=False, which moves the item to the GLPI "
+        "trash (is_deleted = 1): reversible, and attachments survive. Restore with the "
+        "matching update_* tool and {'is_deleted': 0}. purge=True is PERMANENT and "
+        "IRREVERSIBLE and breaks the item's links to contracts, contacts, assets and "
+        "tickets. Never pass purge=True on your own initiative: use it only when the "
+        "user has explicitly asked for permanent deletion of that specific item, and "
+        "say plainly what will be destroyed before doing it.\n"
+        "\n"
+        "4. Confirm destructive and registry-wide operations with the user first. "
+        "That means any purge, and any update_* or delete_* touching more than one "
+        "item. Creating a single supplier, contact or contract on explicit request "
+        "does not need a separate confirmation.\n"
+        "\n"
+        "5. update_* takes only the fields being changed. Passing a full record will "
+        "overwrite fields the user did not intend to touch. Never send a field just "
+        "to restate its current value.\n"
+        "\n"
+        "6. Field conventions. Contract duration, notice, periodicity and billing are "
+        "expressed in MONTHS, not days or years. Dates use YYYY-MM-DD. Passing "
+        "supplier_id to create_contact or create_contract also creates the junction "
+        "entry and returns it under '_supplier_link'; a contact or contract created "
+        "without it stays unattached to any supplier.\n"
+        "\n"
+        "7. Do not invent reference data. suppliertypes_id, contacttypes_id and "
+        "contracttypes_id are numeric IDs of rows that must already exist in GLPI. If "
+        "you do not know the right ID, omit the field and tell the user, rather than "
+        "guessing a number.\n"
+        "\n"
+        "8. Report what actually happened. These tools return GLPI's own response, "
+        "including structured error dicts with an 'error' key. Never describe a "
+        "creation, update or deletion as done without checking the returned payload "
+        "for an id or a success flag."
     ),
 )
 glpi = GLPIClient()
@@ -504,10 +561,10 @@ async def search_tickets(
       ticket et aux suivis. C'est la portée historique de cet outil.
     - `content_keywords` : la **description** du ticket (corps initial).
     - `followup_keywords` : le contenu des **suivis**. Indispensable pour
-      l'analyse historique, car à l'organisation l'essentiel de la connaissance
-      d'investigation vit dans les suivis, pas dans les titres. Exemple
-      concret : « OutilA » ou « OutilB » ne retournent rien par
-      titre alors que plusieurs tickets les documentent en suivi.
+      l'analyse historique : sur la plupart des instances, l'essentiel de
+      la connaissance d'investigation vit dans les suivis, pas dans les
+      titres. Le nom d'un outil ou d'un correctif mentionné uniquement en
+      cours de diagnostic ne se trouve que par cette portée.
 
     Note de performance : `content_keywords` et `followup_keywords`
     produisent un LIKE '%motif%' côté MySQL. Sans index FULLTEXT, ces
@@ -1081,6 +1138,264 @@ async def get_groups() -> Any:
     return await glpi.get("/Group")
 
 
+# ── Fournisseurs, contacts et contrats ─────────────────────────────────────
+#
+# These entities follow the same REST pattern as tickets: GET /<Itemtype> to
+# list, POST /<Itemtype> with {"input": {...}} to create. Links between them
+# go through the Contact_Supplier and Contract_Supplier junction tables,
+# which GLPI exposes as itemtypes of their own.
+
+@mcp.tool()
+async def list_suppliers(
+    name_contains: Optional[str] = None,
+    only_active: bool = True,
+    range_start: int = 0,
+    range_limit: int = 50,
+) -> Any:
+    """
+    Liste les fournisseurs enregistrés dans GLPI.
+    - name_contains : filtre optionnel sur le nom (recherche partielle)
+    - only_active : n'inclure que les fournisseurs actifs (is_active = 1)
+    - range_start / range_limit : pagination
+    """
+    params: Dict[str, Any] = {
+        "range": f"{range_start}-{range_start + range_limit - 1}",
+    }
+    if name_contains:
+        params["searchText[name]"] = name_contains
+    if only_active:
+        params["searchText[is_active]"] = 1
+
+    return await glpi.get("/Supplier", params=params)
+
+
+@mcp.tool()
+async def create_supplier(
+    name: str,
+    supplier_type_id: Optional[int] = None,
+    address: Optional[str] = None,
+    postcode: Optional[str] = None,
+    town: Optional[str] = None,
+    state: Optional[str] = None,
+    country: Optional[str] = None,
+    phonenumber: Optional[str] = None,
+    fax: Optional[str] = None,
+    email: Optional[str] = None,
+    website: Optional[str] = None,
+    comment: Optional[str] = None,
+    is_active: bool = True,
+) -> Any:
+    """
+    Crée un fournisseur.
+    - name : raison sociale (seul champ obligatoire)
+    - supplier_type_id : ID d'un SupplierType existant (optionnel)
+    - comment : texte libre, en HTML compatible GLPI (jamais de Markdown)
+    """
+    input_data: Dict[str, Any] = {
+        "name": name,
+        "is_active": 1 if is_active else 0,
+    }
+    optional_fields = {
+        "suppliertypes_id": supplier_type_id,
+        "address": address,
+        "postcode": postcode,
+        "town": town,
+        "state": state,
+        "country": country,
+        "phonenumber": phonenumber,
+        "fax": fax,
+        "email": email,
+        "website": website,
+        "comment": comment,
+    }
+    input_data.update({k: v for k, v in optional_fields.items() if v is not None})
+
+    return await glpi.post("/Supplier", {"input": input_data})
+
+
+@mcp.tool()
+async def create_contact(
+    name: str,
+    firstname: Optional[str] = None,
+    contact_type_id: Optional[int] = None,
+    phone: Optional[str] = None,
+    phone2: Optional[str] = None,
+    mobile: Optional[str] = None,
+    fax: Optional[str] = None,
+    email: Optional[str] = None,
+    address: Optional[str] = None,
+    postcode: Optional[str] = None,
+    town: Optional[str] = None,
+    country: Optional[str] = None,
+    comment: Optional[str] = None,
+    supplier_id: Optional[int] = None,
+) -> Any:
+    """
+    Crée un contact (personne-ressource chez un fournisseur).
+    - name : nom de famille (seul champ obligatoire)
+    - contact_type_id : ID d'un ContactType existant (optionnel)
+    - supplier_id : si fourni, le contact est rattaché à ce fournisseur via
+      Contact_Supplier. Le résultat contient alors la clé "_supplier_link".
+    - comment : texte libre, en HTML compatible GLPI (jamais de Markdown)
+    """
+    input_data: Dict[str, Any] = {"name": name}
+    optional_fields = {
+        "firstname": firstname,
+        "contacttypes_id": contact_type_id,
+        "phone": phone,
+        "phone2": phone2,
+        "mobile": mobile,
+        "fax": fax,
+        "email": email,
+        "address": address,
+        "postcode": postcode,
+        "town": town,
+        "country": country,
+        "comment": comment,
+    }
+    input_data.update({k: v for k, v in optional_fields.items() if v is not None})
+
+    result = await glpi.post("/Contact", {"input": input_data})
+
+    if supplier_id and isinstance(result, dict) and result.get("id"):
+        result["_supplier_link"] = await glpi.post(
+            "/Contact_Supplier",
+            {"input": {"contacts_id": result["id"], "suppliers_id": supplier_id}},
+        )
+
+    return result
+
+
+@mcp.tool()
+async def create_contract(
+    name: str,
+    num: Optional[str] = None,
+    contract_type_id: Optional[int] = None,
+    begin_date: Optional[str] = None,
+    duration: Optional[int] = None,
+    notice: Optional[int] = None,
+    periodicity: Optional[int] = None,
+    billing: Optional[int] = None,
+    accounting_number: Optional[str] = None,
+    comment: Optional[str] = None,
+    supplier_id: Optional[int] = None,
+) -> Any:
+    """
+    Crée un contrat.
+    - name : intitulé du contrat (seul champ obligatoire)
+    - num : numéro de contrat chez le fournisseur
+    - begin_date : date de début, format AAAA-MM-JJ
+    - duration / notice / periodicity / billing : en MOIS (convention GLPI)
+    - supplier_id : si fourni, le contrat est rattaché à ce fournisseur via
+      Contract_Supplier. Le résultat contient alors la clé "_supplier_link".
+    - comment : texte libre, en HTML compatible GLPI (jamais de Markdown)
+    """
+    input_data: Dict[str, Any] = {"name": name}
+    optional_fields = {
+        "num": num,
+        "contracttypes_id": contract_type_id,
+        "begin_date": begin_date,
+        "duration": duration,
+        "notice": notice,
+        "periodicity": periodicity,
+        "billing": billing,
+        "accounting_number": accounting_number,
+        "comment": comment,
+    }
+    input_data.update({k: v for k, v in optional_fields.items() if v is not None})
+
+    result = await glpi.post("/Contract", {"input": input_data})
+
+    if supplier_id and isinstance(result, dict) and result.get("id"):
+        result["_supplier_link"] = await glpi.post(
+            "/Contract_Supplier",
+            {"input": {"contracts_id": result["id"], "suppliers_id": supplier_id}},
+        )
+
+    return result
+
+
+# ── Mise à jour et suppression (fournisseurs, contacts, contrats) ──────────
+#
+# Deletion: GLPI moves the item to the trash (is_deleted = 1) and keeps it,
+# unless purge=True is requested explicitly. A trashed supplier stays attached
+# to its contracts, contacts, assets and tickets; purging is irreversible and
+# breaks those attachments. To restore a trashed item, call the matching
+# update_* tool with {"is_deleted": 0}.
+
+@mcp.tool()
+async def update_supplier(supplier_id: int, update_fields: Dict[str, Any]) -> Any:
+    """
+    Met à jour un fournisseur. Passer uniquement les champs à modifier.
+    Exemples de champs : name, suppliertypes_id, address, town, phonenumber,
+    email, website, comment, is_active
+    Pour restaurer un fournisseur mis à la corbeille : {"is_deleted": 0}
+    """
+    return await glpi.put(f"/Supplier/{supplier_id}", {"input": update_fields})
+
+
+@mcp.tool()
+async def update_contact(contact_id: int, update_fields: Dict[str, Any]) -> Any:
+    """
+    Met à jour un contact. Passer uniquement les champs à modifier.
+    Exemples de champs : name, firstname, contacttypes_id, phone, mobile,
+    email, comment
+    Pour restaurer un contact mis à la corbeille : {"is_deleted": 0}
+    """
+    return await glpi.put(f"/Contact/{contact_id}", {"input": update_fields})
+
+
+@mcp.tool()
+async def update_contract(contract_id: int, update_fields: Dict[str, Any]) -> Any:
+    """
+    Met à jour un contrat. Passer uniquement les champs à modifier.
+    Exemples de champs : name, num, contracttypes_id, begin_date, duration,
+    notice, periodicity, billing, accounting_number, comment
+    Les durées sont en MOIS et begin_date au format AAAA-MM-JJ.
+    Pour restaurer un contrat mis à la corbeille : {"is_deleted": 0}
+    """
+    return await glpi.put(f"/Contract/{contract_id}", {"input": update_fields})
+
+
+@mcp.tool()
+async def delete_supplier(supplier_id: int, purge: bool = False) -> Any:
+    """
+    Supprime un fournisseur.
+    - purge=False (défaut) : mise à la corbeille, réversible via
+      update_supplier(supplier_id, {"is_deleted": 0})
+    - purge=True : suppression définitive et IRRÉVERSIBLE, qui retire aussi
+      les rattachements du fournisseur à ses contrats, contacts, matériels
+      et tickets. À n'utiliser que sur un doublon ou une saisie erronée.
+    """
+    params = {"force_purge": "true"} if purge else None
+    return await glpi.delete(f"/Supplier/{supplier_id}", params=params)
+
+
+@mcp.tool()
+async def delete_contact(contact_id: int, purge: bool = False) -> Any:
+    """
+    Supprime un contact.
+    - purge=False (défaut) : mise à la corbeille, réversible via
+      update_contact(contact_id, {"is_deleted": 0})
+    - purge=True : suppression définitive et IRRÉVERSIBLE.
+    """
+    params = {"force_purge": "true"} if purge else None
+    return await glpi.delete(f"/Contact/{contact_id}", params=params)
+
+
+@mcp.tool()
+async def delete_contract(contract_id: int, purge: bool = False) -> Any:
+    """
+    Supprime un contrat.
+    - purge=False (défaut) : mise à la corbeille, réversible via
+      update_contract(contract_id, {"is_deleted": 0})
+    - purge=True : suppression définitive et IRRÉVERSIBLE, qui retire aussi
+      les rattachements du contrat à ses matériels et à son fournisseur.
+    """
+    params = {"force_purge": "true"} if purge else None
+    return await glpi.delete(f"/Contract/{contract_id}", params=params)
+
+
 # ---------------------------------------------------------------------------
 # Point d'entrée
 # ---------------------------------------------------------------------------
@@ -1132,7 +1447,7 @@ async def list_kb_articles(
 
 @mcp.tool()
 async def get_kb_article(article_id: int) -> Any:
-    """Retourne le detail complet d'un article de la base de connaissances."""
+    """Retourne le détail complet d'un article de la base de connaissances."""
     return await glpi.get(f"/KnowbaseItem/{article_id}")
 
 
@@ -1191,10 +1506,10 @@ async def create_kb_article(
     is_faq: bool = False,
 ) -> Any:
     """
-    Cree un nouvel article dans la base de connaissances.
+    Crée un nouvel article dans la base de connaissances.
     - name : titre de l'article
-    - answer : contenu / solution (HTML accepte)
-    - category_id : ID de la categorie KB (optionnel)
+    - answer : contenu / solution (HTML accepté)
+    - category_id : ID de la catégorie KB (optionnel)
     - is_faq : True pour publier dans la FAQ publique
     """
     input_data: Dict[str, Any] = {
@@ -1210,7 +1525,7 @@ async def create_kb_article(
 @mcp.tool()
 async def update_kb_article(article_id: int, update_fields: Dict[str, Any]) -> Any:
     """
-    Met a jour un article de la base de connaissances.
+    Met à jour un article de la base de connaissances.
     Exemples de champs : name, answer, is_faq, knowbaseitemcategories_id
     """
     return await glpi.put(f"/KnowbaseItem/{article_id}", {"input": update_fields})
@@ -1218,15 +1533,15 @@ async def update_kb_article(article_id: int, update_fields: Dict[str, Any]) -> A
 
 @mcp.tool()
 async def list_kb_categories() -> Any:
-    """Liste toutes les categories de la base de connaissances."""
+    """Liste toutes les catégories de la base de connaissances."""
     return await glpi.get("/KnowbaseItemCategory")
 
 
 @mcp.tool()
 async def get_kb_article_visibility(article_id: int) -> Dict[str, Any]:
     """
-    Retourne les regles de visibilite d'un article KB :
-    profils, groupes, utilisateurs et entites ayant acces.
+    Retourne les règles de visibilité d'un article KB :
+    profils, groupes, utilisateurs et entités ayant accès.
     """
     profiles = await glpi.get(f"/KnowbaseItem/{article_id}/KnowbaseItem_Profile")
     groups   = await glpi.get(f"/KnowbaseItem/{article_id}/KnowbaseItem_Group")
@@ -1248,10 +1563,10 @@ async def add_kb_article_visibility_profile(
     is_recursive: bool = False,
 ) -> Any:
     """
-    Ajoute un profil dans la visibilite d'un article KB.
+    Ajoute un profil dans la visibilité d'un article KB.
     - profiles_id : ID du profil GLPI
-    - entities_id : 0 = entite racine
-    - is_recursive : appliquer aux sous-entites
+    - entities_id : 0 = entité racine
+    - is_recursive : appliquer aux sous-entités
     """
     return await glpi.post("/KnowbaseItem_Profile", {"input": {
         "knowbaseitems_id": article_id,
@@ -1269,7 +1584,7 @@ async def add_kb_article_visibility_group(
     is_recursive: bool = False,
 ) -> Any:
     """
-    Ajoute un groupe dans la visibilite d'un article KB.
+    Ajoute un groupe dans la visibilité d'un article KB.
     - groups_id : ID du groupe GLPI
     """
     return await glpi.post("/KnowbaseItem_Group", {"input": {
@@ -1286,9 +1601,9 @@ async def update_kb_article_visibility_profile(
     update_fields: Dict[str, Any],
 ) -> Any:
     """
-    Met a jour une regle de visibilite par profil d'un article KB.
-    - visibility_id : ID de l'entree KnowbaseItem_Profile (obtenu via get_kb_article_visibility)
-    - update_fields : champs a modifier, ex: {"entities_id": 1, "is_recursive": 1}
+    Met à jour une règle de visibilité par profil d'un article KB.
+    - visibility_id : ID de l'entrée KnowbaseItem_Profile (obtenu via get_kb_article_visibility)
+    - update_fields : champs à modifier, ex: {"entities_id": 1, "is_recursive": 1}
     """
     return await glpi.put(f"/KnowbaseItem_Profile/{visibility_id}", {"input": update_fields})
 
@@ -1299,11 +1614,13 @@ async def update_kb_article_visibility_group(
     update_fields: Dict[str, Any],
 ) -> Any:
     """
-    Met a jour une regle de visibilite par groupe d'un article KB.
-    - visibility_id : ID de l'entree KnowbaseItem_Group (obtenu via get_kb_article_visibility)
-    - update_fields : champs a modifier, ex: {"entities_id": 1, "is_recursive": 1}
+    Met à jour une règle de visibilité par groupe d'un article KB.
+    - visibility_id : ID de l'entrée KnowbaseItem_Group (obtenu via get_kb_article_visibility)
+    - update_fields : champs à modifier, ex: {"entities_id": 1, "is_recursive": 1}
     """
     return await glpi.put(f"/KnowbaseItem_Group/{visibility_id}", {"input": update_fields})
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
 

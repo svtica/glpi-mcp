@@ -12,7 +12,7 @@ Serveur [MCP (Model Context Protocol)](https://modelcontextprotocol.io) permetta
 
 Compatible **GLPI 10** (endpoint `apirest.php`) et **GLPI 11** (endpoint `api.php/v1`).
 
-Une fois configuré, Claude peut consulter, créer et mettre à jour des tickets, ajouter des suivis et des tâches, poster des solutions, gérer la base de connaissances, et produire des statistiques, le tout en langage naturel depuis votre conversation.
+Une fois configuré, Claude peut consulter, créer et mettre à jour des tickets, ajouter des suivis et des tâches, poster des solutions, gérer la base de connaissances, tenir le registre des fournisseurs, contacts et contrats, et produire des statistiques, le tout en langage naturel depuis votre conversation.
 
 ---
 
@@ -97,8 +97,11 @@ Renseignez ensuite les champs dans `config.json` :
 | `GLPI_USER_TOKEN` | User-Token de votre compte GLPI                    |
 | `LANG`            | Langue des libellés : `fr` (défaut) ou `en` — non encodé en base64 |
 | `GLPI_VERSION`    | Version GLPI : `10` (défaut) ou `11` — non encodé en base64 |
+| `VERIFY_TLS`      | Validation du certificat TLS de GLPI : `false` (défaut) ou `true` — booléen simple, non encodé en base64 |
 
-> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`, `GLPI_VERSION`) à la place du fichier `config.json`.
+> Vous pouvez aussi utiliser des **variables d'environnement** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`, `GLPI_VERSION`, `GLPI_VERIFY_TLS`) à la place du fichier `config.json`.
+
+> **⚠️ `VERIFY_TLS` vaut `false` par défaut**, ce qui désactive la validation du certificat de votre instance GLPI. C'est le réglage prévu pour un GLPI intranet derrière un certificat auto-signé ou une AC privée absente du magasin `certifi` de Python. Passez à `true` dès que l'AC interne est distribuée à `certifi` : sur un GLPI accessible hors du réseau interne, laisser `false` expose la connexion — et donc vos jetons d'API — à une interception.
 
 ### Versions GLPI supportées
 
@@ -286,6 +289,40 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | `get_users` | Liste les utilisateurs GLPI |
 | `get_groups` | Liste les groupes GLPI |
 
+### 🏢 Fournisseurs, contacts et contrats
+
+| Outil | Description |
+|-------|-------------|
+| `list_suppliers` | Liste les fournisseurs (filtre `name_contains`, `only_active`, pagination) |
+| `create_supplier` | Crée un fournisseur (`name` obligatoire, coordonnées optionnelles) |
+| `create_contact` | Crée un contact ; rattachement optionnel à un fournisseur via `supplier_id` |
+| `create_contract` | Crée un contrat ; rattachement optionnel à un fournisseur via `supplier_id` |
+| `update_supplier` | Met à jour un fournisseur (`update_fields` : champs à modifier uniquement) |
+| `update_contact` | Met à jour un contact |
+| `update_contract` | Met à jour un contrat |
+| `delete_supplier` | Met un fournisseur à la corbeille ; `purge=True` pour supprimer définitivement |
+| `delete_contact` | Met un contact à la corbeille ; `purge=True` pour supprimer définitivement |
+| `delete_contract` | Met un contrat à la corbeille ; `purge=True` pour supprimer définitivement |
+
+> **Note :** `list_suppliers` filtre sur les fournisseurs actifs par défaut. Passer
+> `only_active=False` pour inclure les fournisseurs désactivés.
+
+> **Note :** Pour `create_contract`, les champs `duration`, `notice`, `periodicity`
+> et `billing` s'expriment en **mois** (convention GLPI), et `begin_date` au format
+> `AAAA-MM-JJ`.
+
+> **Note :** Quand `supplier_id` est fourni, l'entrée de liaison
+> (`Contact_Supplier` / `Contract_Supplier`) est créée dans un second appel et
+> son résultat est retourné sous la clé `_supplier_link`. Si la création du
+> contact ou du contrat échoue, aucune liaison n'est tentée.
+
+> **⚠️ Suppression — corbeille par défaut, purge sur demande.** Sans argument,
+> `delete_*` place l'élément à la corbeille GLPI (`is_deleted = 1`) : il reste
+> rattaché à ses contrats, contacts, matériels et tickets, et se restaure avec
+> l'outil `update_*` correspondant et `{"is_deleted": 0}`. Avec `purge=True`,
+> la suppression est **définitive et irréversible** et casse ces rattachements.
+> Réserver la purge aux doublons et aux saisies erronées.
+
 ---
 
 ## Exemples d'utilisation avec Claude
@@ -311,6 +348,12 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 > *« Qui peut voir l'article #120 de la base de connaissances ? »*
 
 > *« Ajoute le groupe Techniciens à la visibilité de l'article #120 »*
+
+> *« Quels fournisseurs avons-nous pour la téléphonie ? »*
+>
+> *« Ajoute Acme Télécom au registre des fournisseurs, puis crée le contrat d'entretien CT-2026-014 qui débute le 1er avril pour 36 mois »*
+>
+> *« Désactive le fournisseur Acme Télécom — on ne fait plus affaire avec eux, mais garde l'historique des contrats »*
 
 > *« Clôture le ticket #4102 avec comme solution : redémarrage du service résolvant le problème »*
 
@@ -448,7 +491,7 @@ Puis relancez `uv sync` pour mettre à jour l'environnement.
 
 Compatible with **GLPI 10** (endpoint `apirest.php`) and **GLPI 11** (endpoint `api.php/v1`).
 
-Once configured, Claude can view, create and update tickets, add followups and tasks, post solutions, manage the knowledge base, and generate statistics, all in natural language from your conversation.
+Once configured, Claude can view, create and update tickets, add followups and tasks, post solutions, manage the knowledge base, maintain the supplier, contact and contract registry, and generate statistics, all in natural language from your conversation.
 
 ---
 
@@ -533,8 +576,11 @@ Then fill in the fields in `config.json`:
 | `GLPI_USER_TOKEN` | User-Token from your GLPI account                  |
 | `LANG`            | Label language: `fr` (default) or `en` — not base64-encoded |
 | `GLPI_VERSION`    | GLPI version: `10` (default) or `11` — not base64-encoded |
+| `VERIFY_TLS`      | Validate the GLPI TLS certificate: `false` (default) or `true` — plain boolean, not base64-encoded |
 
-> You can also use **environment variables** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`, `GLPI_VERSION`) instead of the `config.json` file.
+> You can also use **environment variables** (`GLPI_URL`, `GLPI_APP_TOKEN`, `GLPI_USER_TOKEN`, `GLPI_LANG`, `GLPI_VERSION`, `GLPI_VERIFY_TLS`) instead of the `config.json` file.
+
+> **⚠️ `VERIFY_TLS` defaults to `false`**, which disables certificate validation for your GLPI instance. That is the intended setting for an intranet GLPI behind a self-signed certificate or a private CA missing from Python's `certifi` bundle. Switch it to `true` as soon as the internal CA is distributed to `certifi`: on a GLPI reachable from outside the internal network, leaving it `false` exposes the connection — and therefore your API tokens — to interception.
 
 ### Supported GLPI versions
 
@@ -722,6 +768,40 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 | `get_users` | List GLPI users |
 | `get_groups` | List GLPI groups |
 
+### 🏢 Suppliers, contacts and contracts
+
+| Tool | Description |
+|------|-------------|
+| `list_suppliers` | List suppliers (`name_contains` and `only_active` filters, pagination) |
+| `create_supplier` | Create a supplier (`name` required, contact details optional) |
+| `create_contact` | Create a contact; optionally attach it to a supplier via `supplier_id` |
+| `create_contract` | Create a contract; optionally attach it to a supplier via `supplier_id` |
+| `update_supplier` | Update a supplier (`update_fields`: changed fields only) |
+| `update_contact` | Update a contact |
+| `update_contract` | Update a contract |
+| `delete_supplier` | Move a supplier to the trash; `purge=True` to delete permanently |
+| `delete_contact` | Move a contact to the trash; `purge=True` to delete permanently |
+| `delete_contract` | Move a contract to the trash; `purge=True` to delete permanently |
+
+> **Note:** `list_suppliers` returns active suppliers only by default. Pass
+> `only_active=False` to include disabled ones.
+
+> **Note:** For `create_contract`, the `duration`, `notice`, `periodicity` and
+> `billing` fields are expressed in **months** (GLPI convention), and
+> `begin_date` uses the `YYYY-MM-DD` format.
+
+> **Note:** When `supplier_id` is provided, the junction entry
+> (`Contact_Supplier` / `Contract_Supplier`) is created in a second call and its
+> result is returned under the `_supplier_link` key. If the contact or contract
+> creation fails, no link is attempted.
+
+> **⚠️ Deletion — trash by default, purge on request.** With no argument,
+> `delete_*` moves the item to the GLPI trash (`is_deleted = 1`): it stays
+> attached to its contracts, contacts, assets and tickets, and can be restored
+> with the matching `update_*` tool and `{"is_deleted": 0}`. With `purge=True`,
+> deletion is **permanent and irreversible** and breaks those attachments.
+> Reserve purging for duplicates and data-entry mistakes.
+
 ---
 
 ## Usage examples with Claude
@@ -747,6 +827,12 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 > *"Who can see knowledge base article #120?"*
 
 > *"Add the Technicians group to the visibility of article #120"*
+
+> *"Which suppliers do we have for telephony?"*
+>
+> *"Add Acme Telecom to the supplier registry, then create maintenance contract CT-2026-014 starting April 1st for 36 months"*
+>
+> *"Deactivate the Acme Telecom supplier — we no longer do business with them, but keep the contract history"*
 
 > *"Close ticket #4102 with the solution: service restart resolved the issue"*
 
