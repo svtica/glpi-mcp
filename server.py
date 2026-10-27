@@ -658,11 +658,14 @@ async def create_ticket(
     priority: int = 3,
     assigned_user_id: Optional[int] = None,
     assigned_group_id: Optional[int] = None,
+    requester_user_id: Optional[int] = None,
 ) -> Any:
     """
     Crée un nouveau ticket.
     - type : 1=Incident 2=Demande de service
     - priority : 1 (très basse) → 6 (majeure)
+    - requester_user_id : ID de l'utilisateur GLPI à inscrire comme
+      demandeur. Omis → GLPI applique son défaut (le compte de la session API).
     """
     input_data: Dict[str, Any] = {
         "name": name,
@@ -676,6 +679,8 @@ async def create_ticket(
         input_data["_users_id_assign"] = assigned_user_id
     if assigned_group_id:
         input_data["_groups_id_assign"] = assigned_group_id
+    if requester_user_id:
+        input_data["_users_id_requester"] = requester_user_id
 
     return await glpi.post("/Ticket", {"input": input_data})
 

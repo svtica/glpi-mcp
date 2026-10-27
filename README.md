@@ -218,7 +218,7 @@ Redémarrez Claude Desktop. Si la configuration est correcte, une icône 🔌 ap
 | `list_tickets` | Liste les tickets avec pagination et filtres (statut, type) |
 | `get_ticket` | Détail complet d'un ticket avec libellés lisibles |
 | `search_tickets` | Recherche avancée par mots-clés, statut, type, catégorie, assigné |
-| `create_ticket` | Crée un nouveau ticket |
+| `create_ticket` | Crée un nouveau ticket (option `requester_user_id` pour fixer le demandeur) |
 | `update_ticket` | Modifie les champs d'un ticket existant |
 | `delete_ticket` | Supprime un ticket |
 | `link_tickets` | Lie deux tickets entre eux (lié, doublon, enfant, parent) |
@@ -697,7 +697,7 @@ Restart Claude Desktop. If the configuration is correct, a 🔌 icon will appear
 | `list_tickets` | List tickets with pagination and filters (status, type) |
 | `get_ticket` | Full ticket details with readable labels |
 | `search_tickets` | Advanced search by keywords, status, type, category, assignee |
-| `create_ticket` | Create a new ticket |
+| `create_ticket` | Create a new ticket (optional `requester_user_id` sets the requester) |
 | `update_ticket` | Update fields of an existing ticket |
 | `delete_ticket` | Delete a ticket |
 | `link_tickets` | Link two tickets (linked, duplicate, child, parent) |
